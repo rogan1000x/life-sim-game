@@ -47,6 +47,7 @@ function App() {
   const gameRef = useRef(null);
   const allocateStatRef = useRef(null);
   const godModeRef = useRef(false);
+  const revivePlayerRef = useRef(null);
   const [playerStats, setPlayerStats] = useState({
     level: 1,
     exp: 0,
@@ -81,6 +82,7 @@ function App() {
     let npcs;
     let nearbyNpc = null;
     let dialogueIndex = 0;
+    let isKnockedBack = false;
 
     const config = {
       type: Phaser.AUTO,
@@ -177,6 +179,7 @@ function App() {
         statPoints++;
         hpText.setText('HP: ' + hp);
         playLevelUpSound();
+        createParticleBurst(gameScene, player.x, player.y, 0xffff00, 16);
       }
 
       syncStatsToReact();
@@ -219,6 +222,13 @@ function App() {
       syncStatsToReact();
     }
     allocateStatRef.current = allocateStat;
+
+    function revivePlayer() {
+      hp = maxHp;
+      hpText.setText('HP: ' + hp);
+      syncStatsToReact();
+    }
+    revivePlayerRef.current = revivePlayer;
 
     function addToInventory(entityKey) {
       if (!inventory[entityKey]) {
@@ -320,6 +330,7 @@ function App() {
         const info = ENTITY_TYPES[entity.entityType];
         if (info.category !== 'hostile_monster' || !entity.active) return;
         if (godModeRef.current) return;
+        if (hp <= 0) return; // ← 이미 죽었으면 더 이상 데미지 처리 안 함
 
         hp -= info.damage;
         hp = Math.max(0, hp);
@@ -332,6 +343,11 @@ function App() {
 
         const knockbackAngle = Phaser.Math.Angle.Between(entity.x, entity.y, player.x, player.y);
         player.body.setVelocity(Math.cos(knockbackAngle) * 300, Math.sin(knockbackAngle) * 300);
+
+        isKnockedBack = true;
+        setTimeout(() => {
+          isKnockedBack = false;
+        }, 200); // 0.2초 동안만 넉백 상태 유지
 
         syncStatsToReact();
       });
@@ -355,43 +371,28 @@ function App() {
       syncStatsToReact();
     }
 
-    function gainExp(amount) {
-      exp += amount;
-      const expNeeded = level * 100;
-
-      if (exp >= expNeeded) {
-        exp -= expNeeded;
-        level++;
-        hp = maxHp;
-        statPoints++;
-        hpText.setText('HP: ' + hp);
-        playLevelUpSound();
-
-        createParticleBurst(gameScene, player.x, player.y, 0xffff00, 16);  // ← 추가!
-      }
-
-      syncStatsToReact();
-    }
 
     function update() {
       let velocityX = 0;
       let velocityY = 0;
+      if (hp <= 0) return;  // ← 죽었으면 이동/공격/모든 update 로직 중단
+      if (!isKnockedBack) {
+        if (cursors.left.isDown) {
+          velocityX = -moveSpeed;
+          player.setFlipX(true);
+        } else if (cursors.right.isDown) {
+          velocityX = moveSpeed;
+          player.setFlipX(false);
+        }
 
-      if (cursors.left.isDown) {
-        velocityX = -moveSpeed;
-        player.setFlipX(true);
-      } else if (cursors.right.isDown) {
-        velocityX = moveSpeed;
-        player.setFlipX(false);
+        if (cursors.up.isDown) {
+          velocityY = -moveSpeed;
+        } else if (cursors.down.isDown) {
+          velocityY = moveSpeed;
+        }
+
+        player.body.setVelocity(velocityX, velocityY);
       }
-
-      if (cursors.up.isDown) {
-        velocityY = -moveSpeed;
-      } else if (cursors.down.isDown) {
-        velocityY = moveSpeed;
-      }
-
-      player.body.setVelocity(velocityX, velocityY);
 
       entities.getChildren().forEach(entity => {
         if (!entity.active) return;
@@ -570,7 +571,9 @@ function App() {
             />
             {' '}무적 모드
           </label>
-
+          <button onClick={() => revivePlayerRef.current()} style={{ marginBottom: '10px' }}>
+            부활 (HP 회복)
+          </button>
           <p style={{ fontSize: '12px', color: '#888' }}>
             'P' 키로 패널 열기/닫기
           </p>
