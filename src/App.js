@@ -60,11 +60,13 @@ function App() {
     let maxHp = 100;
     let moveSpeed = 200;
     let hp = maxHp;
+    let gameScene;
 
     const config = {
       type: Phaser.AUTO,
       width: 800,
       height: 600,
+      parent: 'phaser-game',
       backgroundColor: '#4a7c3c',
       physics: {
         default: 'arcade',
@@ -88,19 +90,34 @@ function App() {
       return audioContext;
     }
 
-    function playSound(frequency, type = 'sine', duration = 0.15) {
+    function playSound(frequency, type = 'piano', duration = 0.5) {
       const ctx = getAudioContext();
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      oscillator.frequency.value = frequency;
-      oscillator.type = type;
-      gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-      oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + duration);
+      const now = ctx.currentTime;
+
+      // 피아노는 배음(harmonics)을 여러 개 겹쳐서 자연스러운 소리를 냄
+      const harmonics = [1, 2, 3, 4];
+      const gains = [0.3, 0.15, 0.08, 0.04];
+
+      harmonics.forEach((harmonic, i) => {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        oscillator.frequency.value = frequency * harmonic;
+        oscillator.type = 'sine';
+
+        // 피아노 특유의 "치면 바로 크게, 서서히 작아짐" 소리 모양
+        gainNode.gain.setValueAtTime(gains[i], now);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+        oscillator.start(now);
+        oscillator.stop(now + duration);
+      });
     }
+
+
 
     function playLevelUpSound() {
       playSound(600, 'sine', 0.15);
@@ -139,6 +156,26 @@ function App() {
       }
 
       syncStatsToReact();
+    }
+
+    function createParticleBurst(scene, x, y, color, count = 8) {
+      for (let i = 0; i < count; i++) {
+        const particle = scene.add.circle(x, y, 4, color);
+
+        const angle = (Math.PI * 2 * i) / count; // 원형으로 퍼지게
+        const speed = Phaser.Math.Between(50, 100);
+        const targetX = x + Math.cos(angle) * speed;
+        const targetY = y + Math.sin(angle) * speed;
+
+        scene.tweens.add({
+          targets: particle,
+          x: targetX,
+          y: targetY,
+          alpha: 0,
+          duration: 400,
+          onComplete: () => particle.destroy()
+        });
+      }
     }
 
     function allocateStat(statType) {
@@ -205,6 +242,7 @@ function App() {
     }
 
     function create() {
+      gameScene = this;
       this.physics.world.setBounds(-50, -50, 900, 700);
 
       const graphics = this.add.graphics();
@@ -263,6 +301,10 @@ function App() {
         hpText.setText('HP: ' + hp);
         playHitSound();
 
+        // 피격 시 캐릭터 깜빡임 효과
+        player.setTint(0xff0000);
+        this.time.delayedCall(150, () => player.clearTint());
+
         const knockbackAngle = Phaser.Math.Angle.Between(entity.x, entity.y, player.x, player.y);
         player.body.setVelocity(Math.cos(knockbackAngle) * 300, Math.sin(knockbackAngle) * 300);
 
@@ -275,6 +317,24 @@ function App() {
         fontSize: '20px',
         color: '#ff4444'
       });
+
+      syncStatsToReact();
+    }
+
+    function gainExp(amount) {
+      exp += amount;
+      const expNeeded = level * 100;
+
+      if (exp >= expNeeded) {
+        exp -= expNeeded;
+        level++;
+        hp = maxHp;
+        statPoints++;
+        hpText.setText('HP: ' + hp);
+        playLevelUpSound();
+
+        createParticleBurst(gameScene, player.x, player.y, 0xffff00, 16);  // ← 추가!
+      }
 
       syncStatsToReact();
     }
@@ -332,6 +392,8 @@ function App() {
             playSound(info.sound);
             gainExp(info.exp);
 
+            createParticleBurst(this, entity.x, entity.y, info.color);
+
             setTimeout(() => {
               entity.setActive(true);
               entity.setVisible(true);
@@ -349,6 +411,8 @@ function App() {
 
               addToInventory(entity.entityType);
               gainExp(info.exp);
+
+              createParticleBurst(this, entity.x, entity.y, 0xff0000, 12);
 
               setTimeout(() => {
                 entity.hp = entity.maxHp;
