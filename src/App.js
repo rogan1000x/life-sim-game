@@ -31,9 +31,22 @@ const ENTITY_TYPES = {
   }
 };
 
+const NPC_DATA = {
+  villager: {
+    name: '마을 주민',
+    color: 0x4444ff,
+    dialogues: [
+      '안녕하세요! 오늘 날씨가 좋네요.',
+      '이 근처에 나무와 돌이 많으니 채집해보세요.',
+      '늑대를 조심하세요, 꽤 사나워요!'
+    ]
+  }
+};
+
 function App() {
   const gameRef = useRef(null);
   const allocateStatRef = useRef(null);
+  const godModeRef = useRef(false);
   const [playerStats, setPlayerStats] = useState({
     level: 1,
     exp: 0,
@@ -45,6 +58,10 @@ function App() {
     moveSpeed: 200,
     inventory: {}
   });
+
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [godMode, setGodMode] = useState(false);
+  const [dialogue, setDialogue] = useState(null);
 
   useEffect(() => {
     let player;
@@ -61,6 +78,9 @@ function App() {
     let moveSpeed = 200;
     let hp = maxHp;
     let gameScene;
+    let npcs;
+    let nearbyNpc = null;
+    let dialogueIndex = 0;
 
     const config = {
       type: Phaser.AUTO,
@@ -140,6 +160,10 @@ function App() {
         moveSpeed: moveSpeed,
         inventory: { ...inventory }
       });
+    }
+
+    function showDialogueText(text) {
+      setDialogue(text);
     }
 
     function gainExp(amount) {
@@ -295,6 +319,7 @@ function App() {
       this.physics.add.overlap(player, entities, (playerObj, entity) => {
         const info = ENTITY_TYPES[entity.entityType];
         if (info.category !== 'hostile_monster' || !entity.active) return;
+        if (godModeRef.current) return;
 
         hp -= info.damage;
         hp = Math.max(0, hp);
@@ -312,6 +337,15 @@ function App() {
       });
 
       spaceKey = this.input.keyboard.addKey('SPACE');
+      const eKey = this.input.keyboard.addKey('E');
+      this.eKey = eKey; // update()에서 접근하기 위해 scene에 저장
+
+      npcs = this.add.group();
+      const npc = this.add.rectangle(400, 150, 40, 60, NPC_DATA.villager.color);
+      npc.npcType = 'villager';
+      this.physics.add.existing(npc, true); // 정적 (안 움직임)
+      npcs.add(npc);
+      this.physics.add.collider(player, npcs);
 
       hpText = this.add.text(20, 20, 'HP: 100', {
         fontSize: '20px',
@@ -426,11 +460,44 @@ function App() {
           }
         });
       }
+      // NPC와 대화
+      nearbyNpc = null;
+      npcs.getChildren().forEach(npc => {
+        const distance = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
+        if (distance < 80) {
+          nearbyNpc = npc;
+        }
+      });
+
+      if (Phaser.Input.Keyboard.JustDown(this.eKey) && nearbyNpc) {
+        const npcInfo = NPC_DATA[nearbyNpc.npcType];
+        showDialogueText(npcInfo.dialogues[dialogueIndex]);
+        dialogueIndex = (dialogueIndex + 1) % npcInfo.dialogues.length;
+
+        setTimeout(() => {
+          setDialogue(null);
+        }, 3000);
+      }
     }
 
     return () => {
       game.destroy(true);
     };
+  }, []);
+
+  useEffect(() => {
+    godModeRef.current = godMode;
+  }, [godMode]);
+
+  useEffect(() => {
+    function handleKeyPress(e) {
+      if (e.key === 'p' || e.key === 'P') {
+        setShowAdmin(prev => !prev);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
 
   return (
@@ -480,6 +547,54 @@ function App() {
           ))
         )}
       </div>
+      {showAdmin && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          left: '20px',
+          width: '200px',
+          padding: '15px',
+          backgroundColor: '#000',
+          border: '2px solid #ff0000',
+          color: 'white',
+          fontFamily: 'monospace',
+          zIndex: 1000
+        }}>
+          <h4 style={{ color: '#ff0000' }}>⚙ ADMIN</h4>
+
+          <label style={{ display: 'block', marginBottom: '10px' }}>
+            <input
+              type="checkbox"
+              checked={godMode}
+              onChange={(e) => setGodMode(e.target.checked)}
+            />
+            {' '}무적 모드
+          </label>
+
+          <p style={{ fontSize: '12px', color: '#888' }}>
+            'P' 키로 패널 열기/닫기
+          </p>
+        </div>
+      )}
+      {dialogue && (
+        <div style={{
+          position: 'fixed',
+          bottom: '50px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(0,0,0,0.9)',
+          color: 'white',
+          padding: '15px 25px',
+          borderRadius: '8px',
+          border: '2px solid #4444ff',
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          maxWidth: '400px',
+          zIndex: 2000
+        }}>
+          💬 {dialogue}
+        </div>
+      )}
     </div>
   );
 }
