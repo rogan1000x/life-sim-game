@@ -42,11 +42,18 @@ const NPC_DATA = {
   }
 };
 
+const SHOP_ITEMS = [
+  { id: 'potion_small', name: '작은 포션', price: 20, heal: 30 },
+  { id: 'potion_large', name: '큰 포션', price: 50, heal: 100 }
+];
+
 function App() {
   const gameRef = useRef(null);
   const allocateStatRef = useRef(null);
   const godModeRef = useRef(false);
   const revivePlayerRef = useRef(null);
+  const buyItemRef = useRef(null);
+  const useItemRef = useRef(null);
   const [playerStats, setPlayerStats] = useState({
     level: 1,
     exp: 0,
@@ -64,7 +71,7 @@ function App() {
   const [godMode, setGodMode] = useState(false);
   const [dialogue, setDialogue] = useState(null);
   const [gameStarted, setGameStarted] = useState(false);
-
+  const [showShop, setShowShop] = useState(false);
   useEffect(() => {
     if (!gameStarted) return;
 
@@ -238,6 +245,47 @@ function App() {
       syncStatsToReact();
     }
     revivePlayerRef.current = revivePlayer;
+
+// 상점 아이템 구매: 즉시 사용하지 않고 인벤토리에 저장만 함
+function buyItem(item) {
+  if (gold < item.price) return; // 골드 부족하면 구매 불가
+
+  gold -= item.price;
+  if (!inventory[item.id]) {
+    inventory[item.id] = 0;
+  }
+  inventory[item.id]++; // 인벤토리에 아이템 개수 추가
+
+  syncStatsToReact();
+}
+buyItemRef.current = buyItem;
+
+// 인벤토리에 있는 아이템을 실제로 사용 (예: 포션 마시기)
+function useItem(itemId) {
+  if (!inventory[itemId] || inventory[itemId] <= 0) return; // 보유 개수 없으면 사용 불가
+
+  const item = SHOP_ITEMS.find(i => i.id === itemId); // 아이템 정보(회복량 등) 찾기
+  if (!item) return;
+
+  inventory[itemId]--; // 사용했으니 개수 1개 차감
+  hp = Math.min(maxHp, hp + item.heal); // 최대체력 넘지 않게 회복
+  hpText.setText('HP: ' + hp);
+  syncStatsToReact();
+}
+useItemRef.current = useItem;
+
+    function useItem(itemId) {
+      if (!inventory[itemId] || inventory[itemId] <= 0) return;
+
+      const item = SHOP_ITEMS.find(i => i.id === itemId);
+      if (!item) return;
+
+      inventory[itemId]--;
+      hp = Math.min(maxHp, hp + item.heal);
+      hpText.setText('HP: ' + hp);
+      syncStatsToReact();
+    }
+    useItemRef.current = useItem;
 
     function addToInventory(entityKey) {
       if (!inventory[entityKey]) {
@@ -497,13 +545,7 @@ function App() {
       });
 
       if (Phaser.Input.Keyboard.JustDown(this.eKey) && nearbyNpc) {
-        const npcInfo = NPC_DATA[nearbyNpc.npcType];
-        showDialogueText(npcInfo.dialogues[dialogueIndex]);
-        dialogueIndex = (dialogueIndex + 1) % npcInfo.dialogues.length;
-
-        setTimeout(() => {
-          setDialogue(null);
-        }, 3000);
+        setShowShop(prev => !prev);
       }
     }
 
@@ -710,13 +752,22 @@ function App() {
         {Object.keys(playerStats.inventory).length === 0 ? (
           <p>비어있음</p>
         ) : (
-          Object.keys(playerStats.inventory).map(key => (
-            <p key={key}>
-              {ENTITY_TYPES[key].name}: {playerStats.inventory[key]}
-            </p>
-          ))
-        )}
-      </div>
+          Object.keys(playerStats.inventory).map(key => {
+            const shopItem = SHOP_ITEMS.find(i => i.id === key);
+            const displayName = shopItem ? shopItem.name : ENTITY_TYPES[key].name;
+
+            return (
+              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                <span>{displayName}: {playerStats.inventory[key]}</span>
+                {shopItem && (
+                  <button onClick={() => useItemRef.current(key)} style={{ fontSize: '12px' }}>
+                    사용
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}      </div>
       {showAdmin && (
         <div style={{
           position: 'fixed',
@@ -765,6 +816,48 @@ function App() {
           zIndex: 2000
         }}>
           💬 {dialogue}
+        </div>
+      )}
+      {showShop && (
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: '#1a1a1a',
+          border: '2px solid #4444ff',
+          borderRadius: '10px',
+          padding: '25px',
+          color: 'white',
+          fontFamily: 'monospace',
+          zIndex: 3000,
+          minWidth: '280px'
+        }}>
+          <h3>🏪 상점</h3>
+          <p style={{ color: '#ffd700' }}>보유 골드: {playerStats.gold} G</p>
+
+          {SHOP_ITEMS.map(item => (
+            <div key={item.id} style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '10px',
+              paddingBottom: '10px',
+              borderBottom: '1px solid #333'
+            }}>
+              <span>{item.name} (HP +{item.heal})</span>
+              <button
+                onClick={() => buyItemRef.current(item)}
+                disabled={playerStats.gold < item.price}
+              >
+                {item.price} G
+              </button>
+            </div>
+          ))}
+
+          <button onClick={() => setShowShop(false)} style={{ marginTop: '15px' }}>
+            닫기
+          </button>
         </div>
       )}
     </div>
