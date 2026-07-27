@@ -1,33 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import Phaser from 'phaser';
 
-// 게임 설정 (나중에 옵션 화면에서 조정 가능하게!)
 const GAME_CONFIG = {
   treeCount: 3,
   stoneCount: 2,
   rabbitCount: 3,
-  wolfCount: 4,        // ← 늑대 개수 늘림! (2 → 4)
-  wolfRespawnMin: 5000,   // 늑대 리스폰 최소 시간 (기존보다 빠르게)
-  wolfRespawnMax: 10000   // 늑대 리스폰 최대 시간 (기존 10000~20000에서 단축)
+  wolfCount: 4,
+  wolfRespawnMin: 5000,
+  wolfRespawnMax: 10000
 };
 
 const ENTITY_TYPES = {
   tree: {
     name: '나무', category: 'resource',
-    exp: 10, color: 0x2d5016, radius: 20, sound: 400, hp: 1
+    exp: 10, color: 0x2d5016, radius: 20, sound: 400, hp: 1, sellPrice: 5
   },
   stone: {
     name: '돌', category: 'resource',
-    exp: 15, color: 0x808080, radius: 18, sound: 250, hp: 1
+    exp: 15, color: 0x808080, radius: 18, sound: 250, hp: 1, sellPrice: 8
   },
   rabbit: {
     name: '토끼', category: 'passive_animal',
-    exp: 20, color: 0xffa500, radius: 15, sound: 700, hp: 1
+    exp: 20, color: 0xffa500, radius: 15, sound: 700, hp: 1, sellPrice: 12
   },
   wolf: {
     name: '늑대', category: 'hostile_monster',
     exp: 40, color: 0x4a0000, radius: 18, sound: 150, hp: 30,
-    damage: 10, speed: 80
+    damage: 10, speed: 80, sellPrice: 25
   }
 };
 
@@ -57,14 +56,18 @@ function App() {
     statPoints: 0,
     attackPower: 10,
     moveSpeed: 200,
+    gold: 0,
     inventory: {}
   });
 
   const [showAdmin, setShowAdmin] = useState(false);
   const [godMode, setGodMode] = useState(false);
   const [dialogue, setDialogue] = useState(null);
+  const [gameStarted, setGameStarted] = useState(false);
 
   useEffect(() => {
+    if (!gameStarted) return;
+
     let player;
     let cursors;
     let entities;
@@ -83,6 +86,7 @@ function App() {
     let nearbyNpc = null;
     let dialogueIndex = 0;
     let isKnockedBack = false;
+    let gold = 0;
 
     const config = {
       type: Phaser.AUTO,
@@ -115,8 +119,6 @@ function App() {
     function playSound(frequency, type = 'piano', duration = 0.5) {
       const ctx = getAudioContext();
       const now = ctx.currentTime;
-
-      // 피아노는 배음(harmonics)을 여러 개 겹쳐서 자연스러운 소리를 냄
       const harmonics = [1, 2, 3, 4];
       const gains = [0.3, 0.15, 0.08, 0.04];
 
@@ -130,7 +132,6 @@ function App() {
         oscillator.frequency.value = frequency * harmonic;
         oscillator.type = 'sine';
 
-        // 피아노 특유의 "치면 바로 크게, 서서히 작아짐" 소리 모양
         gainNode.gain.setValueAtTime(gains[i], now);
         gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
@@ -139,8 +140,6 @@ function App() {
       });
     }
 
-
-
     function playLevelUpSound() {
       playSound(600, 'sine', 0.15);
       setTimeout(() => playSound(900, 'sine', 0.15), 150);
@@ -148,6 +147,14 @@ function App() {
 
     function playHitSound() {
       playSound(120, 'sawtooth', 0.2);
+    }
+
+    function saveGame() {
+      const saveData = {
+        level, exp, hp, maxHp, statPoints,
+        attackPower, moveSpeed, gold, inventory
+      };
+      localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
     }
 
     function syncStatsToReact() {
@@ -160,8 +167,10 @@ function App() {
         statPoints: statPoints,
         attackPower: attackPower,
         moveSpeed: moveSpeed,
+        gold: gold,
         inventory: { ...inventory }
       });
+      saveGame();
     }
 
     function showDialogueText(text) {
@@ -189,7 +198,7 @@ function App() {
       for (let i = 0; i < count; i++) {
         const particle = scene.add.circle(x, y, 4, color);
 
-        const angle = (Math.PI * 2 * i) / count; // 원형으로 퍼지게
+        const angle = (Math.PI * 2 * i) / count;
         const speed = Phaser.Math.Between(50, 100);
         const targetX = x + Math.cos(angle) * speed;
         const targetY = y + Math.sin(angle) * speed;
@@ -279,6 +288,20 @@ function App() {
       gameScene = this;
       this.physics.world.setBounds(-50, -50, 900, 700);
 
+      const savedData = localStorage.getItem('lifeSimSave');
+      if (savedData) {
+        const data = JSON.parse(savedData);
+        level = data.level;
+        exp = data.exp;
+        hp = data.hp;
+        maxHp = data.maxHp;
+        statPoints = data.statPoints;
+        attackPower = data.attackPower;
+        moveSpeed = data.moveSpeed;
+        gold = data.gold;
+        inventory = data.inventory;
+      }
+
       const graphics = this.add.graphics();
       graphics.lineStyle(1, 0x3d6830, 0.5);
       for (let x = 0; x <= 800; x += 40) {
@@ -304,13 +327,11 @@ function App() {
         entities.add(createEntity(this, spawn.x, spawn.y, spawn.type));
       });
 
-      // 동물(토끼) - GAME_CONFIG로 개수 조정 가능
       for (let i = 0; i < GAME_CONFIG.rabbitCount; i++) {
         const pos = getEdgeSpawnPosition();
         entities.add(createEntity(this, pos.x, pos.y, 'rabbit'));
       }
 
-      // 몬스터(늑대) - GAME_CONFIG로 개수 조정 가능
       for (let i = 0; i < GAME_CONFIG.wolfCount; i++) {
         const mx = Phaser.Math.Between(50, 750);
         const my = Phaser.Math.Between(50, 550);
@@ -330,14 +351,13 @@ function App() {
         const info = ENTITY_TYPES[entity.entityType];
         if (info.category !== 'hostile_monster' || !entity.active) return;
         if (godModeRef.current) return;
-        if (hp <= 0) return; // ← 이미 죽었으면 더 이상 데미지 처리 안 함
+        if (hp <= 0) return;
 
         hp -= info.damage;
         hp = Math.max(0, hp);
         hpText.setText('HP: ' + hp);
         playHitSound();
 
-        // 피격 시 캐릭터 깜빡임 효과
         player.setTint(0xff0000);
         this.time.delayedCall(150, () => player.clearTint());
 
@@ -347,23 +367,23 @@ function App() {
         isKnockedBack = true;
         setTimeout(() => {
           isKnockedBack = false;
-        }, 200); // 0.2초 동안만 넉백 상태 유지
+        }, 200);
 
         syncStatsToReact();
       });
 
       spaceKey = this.input.keyboard.addKey('SPACE');
       const eKey = this.input.keyboard.addKey('E');
-      this.eKey = eKey; // update()에서 접근하기 위해 scene에 저장
+      this.eKey = eKey;
 
       npcs = this.add.group();
       const npc = this.add.rectangle(400, 150, 40, 60, NPC_DATA.villager.color);
       npc.npcType = 'villager';
-      this.physics.add.existing(npc, true); // 정적 (안 움직임)
+      this.physics.add.existing(npc, true);
       npcs.add(npc);
       this.physics.add.collider(player, npcs);
 
-      hpText = this.add.text(20, 20, 'HP: 100', {
+      hpText = this.add.text(20, 20, 'HP: ' + hp, {
         fontSize: '20px',
         color: '#ff4444'
       });
@@ -371,11 +391,11 @@ function App() {
       syncStatsToReact();
     }
 
-
     function update() {
       let velocityX = 0;
       let velocityY = 0;
-      if (hp <= 0) return;  // ← 죽었으면 이동/공격/모든 update 로직 중단
+      if (hp <= 0) return;
+
       if (!isKnockedBack) {
         if (cursors.left.isDown) {
           velocityX = -moveSpeed;
@@ -427,6 +447,9 @@ function App() {
             playSound(info.sound);
             gainExp(info.exp);
 
+            gold += info.sellPrice;
+            syncStatsToReact();
+
             createParticleBurst(this, entity.x, entity.y, info.color);
 
             setTimeout(() => {
@@ -447,6 +470,9 @@ function App() {
               addToInventory(entity.entityType);
               gainExp(info.exp);
 
+              gold += info.sellPrice;
+              syncStatsToReact();
+
               createParticleBurst(this, entity.x, entity.y, 0xff0000, 12);
 
               setTimeout(() => {
@@ -461,7 +487,7 @@ function App() {
           }
         });
       }
-      // NPC와 대화
+
       nearbyNpc = null;
       npcs.getChildren().forEach(npc => {
         const distance = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
@@ -484,7 +510,7 @@ function App() {
     return () => {
       game.destroy(true);
     };
-  }, []);
+  }, [gameStarted]);
 
   useEffect(() => {
     godModeRef.current = godMode;
@@ -500,6 +526,148 @@ function App() {
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
+
+  if (!gameStarted) {
+    return (
+      <div style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        overflow: 'hidden',
+        fontFamily: 'monospace'
+      }}>
+        <svg
+          width="100%"
+          height="100%"
+          viewBox="0 0 800 450"
+          preserveAspectRatio="xMidYMid slice"
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }}
+        >
+          <defs>
+            <linearGradient id="sunsetSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#a2d4e8" />
+              <stop offset="50%" stopColor="#fcdbba" />
+              <stop offset="100%" stopColor="#f4c4a3" />
+            </linearGradient>
+          </defs>
+
+          {/* 하늘과 태양 */}
+          <rect x="0" y="0" width="800" height="450" fill="url(#sunsetSky)" />
+          <circle cx="480" cy="90" r="35" fill="#ffcc5c" />
+
+          {/* 뒤쪽 언덕들 (숲 배경) */}
+          <ellipse cx="680" cy="210" rx="220" ry="90" fill="#7cb87c" />
+          <ellipse cx="850" cy="190" rx="180" ry="70" fill="#6aa96a" />
+
+          {/* 설산 */}
+          <polygon points="30,250 140,100 250,250" fill="#7a9263" />
+          <polygon points="107,148 140,100 173,148" fill="#f0f0f0" />
+          <polygon points="190,250 290,120 390,250" fill="#657d51" />
+          <polygon points="260,162 290,120 320,162" fill="#f0f0f0" />
+
+          {/* 앞쪽 들판과 베이스 */}
+          <path d="M 0 240 Q 400 260 800 240 L 800 450 L 0 450 Z" fill="#88c388" />
+          <path d="M 0 350 Q 400 320 800 370 L 800 450 L 0 450 Z" fill="#96c878" />
+
+          {/* 구불구불한 언덕길 */}
+          <path
+            d="M 380 470 C 650 380, 250 310, 500 200"
+            fill="none"
+            stroke="#c8a165"
+            strokeWidth="40"
+            strokeLinecap="round"
+          />
+
+          {/* 우측 숲 (나무 군락) */}
+          <g>
+            <rect x="530" y="200" width="8" height="30" fill="#4a3018" /><circle cx="534" cy="180" r="20" fill="#2d5016" />
+            <rect x="570" y="210" width="8" height="30" fill="#4a3018" /><circle cx="574" cy="190" r="22" fill="#2d5016" />
+            <rect x="610" y="195" width="8" height="30" fill="#4a3018" /><circle cx="614" cy="175" r="18" fill="#356b1c" />
+            <rect x="650" y="225" width="8" height="30" fill="#4a3018" /><circle cx="654" cy="205" r="24" fill="#2d5016" />
+            <rect x="690" y="205" width="8" height="30" fill="#4a3018" /><circle cx="694" cy="185" r="20" fill="#356b1c" />
+            <rect x="730" y="235" width="8" height="30" fill="#4a3018" /><circle cx="734" cy="215" r="25" fill="#2d5016" />
+            <rect x="770" y="215" width="8" height="30" fill="#4a3018" /><circle cx="774" cy="195" r="22" fill="#356b1c" />
+          </g>
+
+          {/* 좌측 드문드문 있는 나무들 */}
+          <g>
+            <rect x="80" y="230" width="10" height="35" fill="#4a3018" /><circle cx="85" cy="210" r="22" fill="#30591b" />
+            <rect x="140" y="250" width="12" height="40" fill="#4a3018" /><circle cx="146" cy="225" r="28" fill="#30591b" />
+            <rect x="280" y="260" width="14" height="45" fill="#4a3018" /><circle cx="287" cy="235" r="32" fill="#2d5016" />
+          </g>
+
+          {/* 목장 울타리 */}
+          <g fill="#8c623d">
+            <rect x="40" y="320" width="410" height="6" />
+            <rect x="40" y="345" width="410" height="6" />
+            <rect x="40" y="370" width="410" height="6" />
+            <rect x="40" y="315" width="8" height="60" />
+            <rect x="90" y="315" width="8" height="60" />
+            <rect x="140" y="315" width="8" height="60" />
+            <rect x="190" y="315" width="8" height="60" />
+            <rect x="290" y="315" width="8" height="60" />
+            <rect x="340" y="315" width="8" height="60" />
+            <rect x="390" y="315" width="8" height="60" />
+            <rect x="442" y="315" width="8" height="60" />
+          </g>
+
+          {/* 중앙 집 */}
+          <rect x="210" y="305" width="80" height="65" fill="#e8c89c" />
+          <polygon points="195,305 250,265 305,305" fill="#a05240" />
+          <rect x="220" y="325" width="15" height="15" fill="#8fd1e8" />
+          <rect x="255" y="335" width="20" height="35" fill="#5c3817" />
+
+          {/* 동물들 */}
+          <circle cx="120" cy="335" r="8" fill="#ffffff" /> {/* 닭 1 */}
+          <circle cx="170" cy="345" r="8" fill="#ffffff" /> {/* 닭 2 */}
+          <circle cx="140" cy="360" r="6" fill="#ffd633" /> {/* 병아리 */}
+          <circle cx="340" cy="330" r="10" fill="#ffb6c1" /> {/* 돼지 1 */}
+          <circle cx="380" cy="345" r="9" fill="#ffb6c1" /> {/* 돼지 2 */}
+
+          {/* 울타리 밖 동물들 */}
+          <circle cx="110" cy="405" r="9" fill="#ffffff" />
+          <circle cx="230" cy="415" r="11" fill="#ffb6c1" />
+          <circle cx="270" cy="400" r="13" fill="#ffb6c1" />
+          <circle cx="310" cy="410" r="7" fill="#ffd633" />
+
+          {/* 바위들 */}
+          <circle cx="530" cy="370" r="18" fill="#7a7a7a" />
+          <circle cx="580" cy="400" r="12" fill="#8c8c8c" />
+          <circle cx="490" cy="410" r="14" fill="#7a7a7a" />
+          <circle cx="40" cy="305" r="8" fill="#8c8c8c" />
+          <circle cx="70" cy="425" r="10" fill="#8c8c8c" />
+        </svg>
+
+        <div style={{
+          position: 'relative',
+          zIndex: 1,
+          backgroundColor: 'rgba(0,0,0,0.65)',
+          padding: '40px 60px',
+          borderRadius: '16px',
+          textAlign: 'center'
+        }}>
+          <h1 style={{ color: 'white', fontSize: '32px', marginBottom: '20px' }}>🌟 로건의 농장</h1>
+          <button
+            onClick={() => setGameStarted(true)}
+            style={{
+              padding: '15px 40px',
+              fontSize: '20px',
+              backgroundColor: '#7a9263',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer'
+            }}
+          >
+            게임 시작
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -527,6 +695,7 @@ function App() {
         <p>HP: {playerStats.hp} / {playerStats.maxHp}</p>
         <p>공격력: {playerStats.attackPower}</p>
         <p>이동속도: {playerStats.moveSpeed}</p>
+        <p style={{ color: '#ffd700' }}>골드: {playerStats.gold} G</p>
 
         {playerStats.statPoints > 0 && (
           <div style={{ marginTop: '10px', padding: '10px', border: '1px solid yellow' }}>
