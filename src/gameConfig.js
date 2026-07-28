@@ -48,3 +48,17 @@ export const SHOP_ITEMS = [
   { id: 'potion_small', name: '작은 포션', price: 20, heal: 30 },
   { id: 'potion_large', name: '큰 포션', price: 50, heal: 100 }
 ];
+
+// 건물(집) 종류 정의 - 나중에 상점 건물, 동료 집 등을 여기에 추가하면 됨
+export const BUILDING_TYPES = {
+  myHouse: {
+    name: '내 집',
+    color: 0x8b5a2b,   // 실외에서 보이는 건물 색
+    width: 100,
+    height: 80,
+    interiorColor: '#3a2a1a', // 실내 배경색
+    furniture: [
+      { type: 'bed', x: 400, y: 200, width: 120, height: 60, color: 0x5a3a2a }
+    ]
+  }
+};

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES } from './gameConfig';
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
 // React의 useEffect 안에 있던 모든 게임 로직이 이 클래스 하나로 정리됨
@@ -21,6 +21,12 @@ export class GameScene extends Phaser.Scene {
     this.isKnockedBack = false;
     this.nearbyNpc = null;
     this.audioContext = null;
+    // 집 꾸미기 시스템 관련 상태
+    // 집 꾸미기 시스템 관련 상태
+    this.isInsideHouse = false;   // 지금 집 안에 있는지 여부
+    this.nearbyHouse = null;      // 근처에 있는 집 오브젝트 (여러 채 중 하나)
+    this.currentHouse = null;     // 현재 들어와있는 집 (나갈 때 위치 복원용)
+    this.furnitureObjects = [];   // 실내에 생성된 가구 오브젝트들 (전환마다 재사용)
 
     // React와 연결하기 위한 콜백 함수들 (App.js에서 설정해줌)
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
@@ -100,6 +106,7 @@ export class GameScene extends Phaser.Scene {
     this.cursors = this.input.keyboard.createCursorKeys();
     this.spaceKey = this.input.keyboard.addKey('SPACE');
     this.eKey = this.input.keyboard.addKey('E');
+    this.hKey = this.input.keyboard.addKey('H'); // 집 입장/퇴장 키
 
     this.physics.add.collider(this.player, this.entities);
 
@@ -137,6 +144,18 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.existing(npc, true); // 정적(안 움직이는) 오브젝트
     this.npcs.add(npc);
     this.physics.add.collider(this.player, this.npcs);
+
+    // 집들을 그룹으로 관리 - 여러 채를 배치해도 같은 로직으로 처리 가능
+    this.houses = this.add.group();
+
+    // 집 배치 목록 (나중에 여러 채 추가하려면 이 배열에 항목만 추가하면 됨)
+    const housePositions = [
+      { x: 650, y: 450, type: 'myHouse' }
+    ];
+
+    housePositions.forEach(pos => {
+      this.houses.add(this.createHouse(pos.x, pos.y, pos.type));
+    });
 
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, {
       fontSize: '20px',
@@ -264,6 +283,22 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.eKey) && this.nearbyNpc) {
       if (this.onShopToggle) this.onShopToggle();
     }
+
+    // 여러 집 중, 지금 캐릭터와 가장 가까운 집을 찾음
+    this.nearbyHouse = null;
+    this.houses.getChildren().forEach(house => {
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x, this.player.y, house.x, house.y
+      );
+      if (distance < 100) {
+        this.nearbyHouse = house;
+      }
+    });
+
+    // H키로 집 안/밖 전환 (실내에 있을 때도 다시 눌러서 나갈 수 있음)
+    if (Phaser.Input.Keyboard.JustDown(this.hKey) && (this.nearbyHouse || this.isInsideHouse)) {
+      this.toggleHouse();
+    }
   }
 
   // ===== 아래는 게임에서 재사용되는 헬퍼 함수들 =====
@@ -319,6 +354,64 @@ export class GameScene extends Phaser.Scene {
       moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
+  }
+
+  // 집 안/밖 상태를 전환. 어떤 집이든(내 집, 동료 집 등) 같은 로직으로 처리됨
+  // 실외 오브젝트 그룹 전체에 대해, 보이는지 여부와 물리 충돌 여부를 한 번에 설정
+  // (Phaser의 그룹 setVisible은 자식 오브젝트까지 확실히 전파되지 않는 경우가 있어
+  //  각 오브젝트를 직접 순회하며 설정하는 방식을 사용)
+setOutdoorObjectsActive(isActive) {
+  [this.houses, this.entities, this.npcs].forEach(group => {
+    group.getChildren().forEach(obj => {
+      obj.setVisible(isActive);
+      obj.setActive(isActive);
+      obj.alpha = isActive ? 1 : 0; // 투명도로도 확실하게 안 보이게 처리
+      if (obj.body) {
+        obj.body.enable = isActive;
+      }
+    });
+  });
+}
+
+  toggleHouse() {
+    if (!this.isInsideHouse) {
+      // ===== 실내 진입 =====
+      this.currentHouse = this.nearbyHouse;
+      const info = BUILDING_TYPES[this.currentHouse.buildingType];
+
+      this.isInsideHouse = true;
+      this.cameras.main.setBackgroundColor(info.interiorColor);
+
+      // 실외 오브젝트들을 각각 순회하며 확실히 숨기고 충돌도 비활성화
+      this.setOutdoorObjectsActive(false);
+
+      this.player.x = 400;
+      this.player.y = 400;
+
+      this.furnitureObjects.forEach(f => f.destroy());
+      this.furnitureObjects = [];
+
+      info.furniture.forEach(item => {
+        const furniture = this.add.rectangle(item.x, item.y, item.width, item.height, item.color);
+        this.physics.add.existing(furniture, true);
+        this.physics.add.collider(this.player, furniture);
+        this.furnitureObjects.push(furniture);
+      });
+
+    } else {
+      // ===== 실외 복귀 =====
+      this.isInsideHouse = false;
+      this.cameras.main.setBackgroundColor('#4a7c3c');
+
+      // 실외 오브젝트들을 다시 보이게 하고 충돌도 복원
+      this.setOutdoorObjectsActive(true);
+
+      this.furnitureObjects.forEach(f => f.destroy());
+      this.furnitureObjects = [];
+
+      this.player.x = this.currentHouse.x;
+      this.player.y = this.currentHouse.y + 80;
+    }
   }
 
   // 상태가 바뀔 때마다 React 쪽(App.js)에 최신 값을 전달 + 자동 저장
@@ -477,4 +570,17 @@ export class GameScene extends Phaser.Scene {
     if (side === 2) return { x: -30, y: Phaser.Math.Between(0, 600) };
     return { x: 830, y: Phaser.Math.Between(0, 600) };
   }
+  // 집 오브젝트를 생성하는 통합 함수 - BUILDING_TYPES 데이터만 있으면 몇 채든 생성 가능
+  createHouse(x, y, typeKey) {
+    const info = BUILDING_TYPES[typeKey];
+
+    const house = this.add.rectangle(x, y, info.width, info.height, info.color);
+    house.buildingType = typeKey; // 나중에 어떤 종류의 집인지 구분하기 위한 태그
+
+    this.physics.add.existing(house, true); // 정적 오브젝트 (부딪히면 못 지나감)
+    this.physics.add.collider(this.player, house);
+
+    return house;
+  }
 }
+
