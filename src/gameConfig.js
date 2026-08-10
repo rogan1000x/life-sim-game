@@ -30,15 +30,32 @@ export const ENTITY_TYPES = {
   }
 };
 
-// NPC 정보 (이름, 색상, 대사) - 나중에 NPC가 늘어나면 여기에 추가만 하면 됨
+// NPC 정보 (이름, 스프라이트 키, 대사) - 캐릭터 스프라이트 도입 후 color 대신 spriteKey 사용
+// 새 NPC를 늘리려면 여기에 항목만 추가하고, GameScene의 npcPositions 배열에 위치만 추가하면 됨
 export const NPC_DATA = {
-  villager: {
+  villager1: {
     name: '마을 주민',
-    color: 0x4444ff,
+    spriteKey: 'npc_villager1',
     dialogues: [
       '안녕하세요! 오늘 날씨가 좋네요.',
       '이 근처에 나무와 돌이 많으니 채집해보세요.',
       '늑대를 조심하세요, 꽤 사나워요!'
+    ]
+  },
+  villager2: {
+    name: '수다쟁이 이웃',
+    spriteKey: 'npc_villager2',
+    dialogues: [
+      '요즘 마을에 새로운 사람들이 늘고 있어요.',
+      '저기 저 집 보이시죠? 제법 아늑하답니다.'
+    ]
+  },
+  villager3: {
+    name: '떠돌이 여행자',
+    spriteKey: 'npc_villager3',
+    dialogues: [
+      '이곳저곳 돌아다니는 걸 좋아해요.',
+      '토끼는 순하지만 늑대는 정말 조심해야 해요.'
     ]
   }
 };

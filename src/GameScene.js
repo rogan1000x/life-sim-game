@@ -20,6 +20,9 @@ export class GameScene extends Phaser.Scene {
     this.dialogueIndex = 0;
     this.isKnockedBack = false;
     this.nearbyNpc = null;
+    this.facingDirection = 'down'; // 캐릭터가 마지막으로 바라본 방향 (멈췄을 때도 그 방향을 보여주기 위해 기억)
+    // 새 캐릭터 에셋은 방향당 프레임이 1장뿐이라(걷기 동작 없음), 이동 중/정지 중 구분 없이 이 프레임을 그대로 사용
+    this.directionFrames = { left: 0, down: 1, up: 2, right: 3 };
     this.audioContext = null;
     // 집 꾸미기 시스템 관련 상태
     // 집 꾸미기 시스템 관련 상태
@@ -35,9 +38,17 @@ export class GameScene extends Phaser.Scene {
     this.godMode = false;      // Admin 무적 모드 (App.js에서 값 변경)
   }
 
-  // 이미지 등 리소스를 미리 불러오는 단계
   preload() {
-    this.load.image('player', 'assets/player_init.jpg');
+    // 캐릭터 4방향 스프라이트시트 (한 칸 16x16px, 방향당 1프레임 - 걷기 동작 없이 방향 전환만 함)
+    this.load.spritesheet('player', 'assets/character/character_directions_v2.png', {
+      frameWidth: 16,
+      frameHeight: 16
+    });
+
+    // NPC 3명의 스프라이트시트도 플레이어와 동일한 형식(16x16, 4프레임)으로 로드
+    this.load.spritesheet('npc_villager1', 'assets/npc/npc_villager1.png', { frameWidth: 16, frameHeight: 16 });
+    this.load.spritesheet('npc_villager2', 'assets/npc/npc_villager2.png', { frameWidth: 16, frameHeight: 16 });
+    this.load.spritesheet('npc_villager3', 'assets/npc/npc_villager3.png', { frameWidth: 16, frameHeight: 16 });
   }
 
   // Scene이 시작될 때 한 번 실행 - 게임 오브젝트들을 배치
@@ -97,11 +108,13 @@ export class GameScene extends Phaser.Scene {
       this.entities.add(this.createEntity(mx, my, 'wolf'));
     }
 
-    // 캐릭터 생성
-    this.player = this.add.sprite(400, 300, 'player');
-    this.player.setDisplaySize(80, 80);
+    // 캐릭터 생성 - 원본이 16px로 작으므로 setScale로 5배 키워서 기존 UI 스케일(80px)에 맞춤
+    this.player = this.add.sprite(400, 300, 'player', this.directionFrames.down); // 시작 방향은 아래
+    this.player.setScale(5);
     this.physics.add.existing(this.player);
     this.player.body.setCollideWorldBounds(true);
+    // 이 에셋은 방향당 프레임이 1장뿐이라 별도 애니메이션 정의 없이,
+    // update()에서 방향이 바뀔 때마다 setFrame으로 직접 프레임을 전환함
 
     this.cursors = this.input.keyboard.createCursorKeys();
     this.spaceKey = this.input.keyboard.addKey('SPACE');
@@ -137,12 +150,16 @@ export class GameScene extends Phaser.Scene {
       this.syncStatsToReact();
     });
 
-    // NPC 생성
+    // NPC 생성 - 집(houses)과 동일한 패턴: 위치 배열 + 통합 함수로 몇 명이든 쉽게 추가 가능
     this.npcs = this.add.group();
-    const npc = this.add.rectangle(400, 150, 40, 60, NPC_DATA.villager.color);
-    npc.npcType = 'villager';
-    this.physics.add.existing(npc, true); // 정적(안 움직이는) 오브젝트
-    this.npcs.add(npc);
+    const npcPositions = [
+      { x: 400, y: 150, type: 'villager1' },
+      { x: 250, y: 500, type: 'villager2' },
+      { x: 600, y: 500, type: 'villager3' }
+    ];
+    npcPositions.forEach(pos => {
+      this.npcs.add(this.createNpc(pos.x, pos.y, pos.type));
+    });
     this.physics.add.collider(this.player, this.npcs);
 
     // 집들을 그룹으로 관리 - 여러 채를 배치해도 같은 로직으로 처리 가능
@@ -167,28 +184,16 @@ export class GameScene extends Phaser.Scene {
 
   // 매 프레임(1초에 약 60번) 반복 실행되는 게임 로직
   update() {
-    let velocityX = 0;
-    let velocityY = 0;
     if (this.hp <= 0) return; // 죽었으면 모든 조작 무시
 
-    // 넉백 중이 아닐 때만 키 입력으로 이동
-    if (!this.isKnockedBack) {
-      if (this.cursors.left.isDown) {
-        velocityX = -this.moveSpeed;
-        this.player.setFlipX(true);
-      } else if (this.cursors.right.isDown) {
-        velocityX = this.moveSpeed;
-        this.player.setFlipX(false);
-      }
-
-      if (this.cursors.up.isDown) {
-        velocityY = -this.moveSpeed;
-      } else if (this.cursors.down.isDown) {
-        velocityY = this.moveSpeed;
-      }
-
-      this.player.body.setVelocity(velocityX, velocityY);
+    // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
+    if (this.isInsideHouse) {
+      this.handleMovement(); // 실내에서도 이동은 가능해야 하니 별도 처리
+      this.checkHouseExit();  // H키로 나가는 것만 체크
+      return;
     }
+
+    this.handleMovement();
 
     // 몬스터는 항상 플레이어를 추적
     this.entities.getChildren().forEach(entity => {
@@ -218,9 +223,9 @@ export class GameScene extends Phaser.Scene {
 
         if (info.category === 'resource' || info.category === 'passive_animal') {
           // 자원/순한 동물은 한 번에 채집됨
-          entity.setActive(false);
-          entity.setVisible(false);
-          entity.body.enable = false;
+          // 채집 상태만 표시하고, 실제 숨김 처리는 refreshEntityVisual이 실내 여부까지 함께 판단
+          entity.isHarvested = true;
+          this.refreshEntityVisual(entity);
 
           this.addToInventory(entity.entityType);
           this.playSound(info.sound);
@@ -232,10 +237,10 @@ export class GameScene extends Phaser.Scene {
           this.createParticleBurst(entity.x, entity.y, info.color);
 
           // 일정 시간 후 다시 나타남 (리젠)
+          // 타이머 실행 시점에 실내에 있었더라도 refreshEntityVisual이 그 상태를 반영해줌
           setTimeout(() => {
-            entity.setActive(true);
-            entity.setVisible(true);
-            entity.body.enable = true;
+            entity.isHarvested = false;
+            this.refreshEntityVisual(entity);
           }, Phaser.Math.Between(5000, 15000));
 
         } else if (info.category === 'hostile_monster') {
@@ -244,9 +249,9 @@ export class GameScene extends Phaser.Scene {
           this.playHitSound();
 
           if (entity.hp <= 0) {
-            entity.setActive(false);
-            entity.setVisible(false);
-            entity.body.enable = false;
+            // 채집 자원과 동일한 방식으로 숨김 상태 관리 (실내 여부와 충돌 방지)
+            entity.isHarvested = true;
+            this.refreshEntityVisual(entity);
 
             this.addToInventory(entity.entityType);
             this.gainExp(info.exp);
@@ -261,9 +266,8 @@ export class GameScene extends Phaser.Scene {
               entity.hp = entity.maxHp;
               entity.x = Phaser.Math.Between(50, 750);
               entity.y = Phaser.Math.Between(50, 550);
-              entity.setActive(true);
-              entity.setVisible(true);
-              entity.body.enable = true;
+              entity.isHarvested = false;
+              this.refreshEntityVisual(entity);
             }, Phaser.Math.Between(GAME_CONFIG.wolfRespawnMin, GAME_CONFIG.wolfRespawnMax));
           }
         }
@@ -356,22 +360,37 @@ export class GameScene extends Phaser.Scene {
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
 
-  // 집 안/밖 상태를 전환. 어떤 집이든(내 집, 동료 집 등) 같은 로직으로 처리됨
-  // 실외 오브젝트 그룹 전체에 대해, 보이는지 여부와 물리 충돌 여부를 한 번에 설정
-  // (Phaser의 그룹 setVisible은 자식 오브젝트까지 확실히 전파되지 않는 경우가 있어
-  //  각 오브젝트를 직접 순회하며 설정하는 방식을 사용)
-setOutdoorObjectsActive(isActive) {
-  [this.houses, this.entities, this.npcs].forEach(group => {
-    group.getChildren().forEach(obj => {
-      obj.setVisible(isActive);
-      obj.setActive(isActive);
-      obj.alpha = isActive ? 1 : 0; // 투명도로도 확실하게 안 보이게 처리
-      if (obj.body) {
-        obj.body.enable = isActive;
-      }
+  // 실외 오브젝트들을 숨기고 충돌도 확실히 제거
+  // 정적 물리 바디(집, 자원)는 body.enable만으로는 충돌이 안 꺼지는 경우가 있어
+  // 화면 밖 먼 곳으로 위치 자체를 이동시켜 물리적으로도 확실히 분리시킴
+  setOutdoorObjectsActive(isActive) {
+    // entities(자원/동물/몬스터)는 채집 대기 상태(isHarvested)도 함께 고려해야 하므로
+    // refreshEntityVisual에 판단을 위임 (여기서 무조건 true로 덮어쓰면 리젠 안 된 자원이 부활해버림)
+    this.entities.getChildren().forEach(entity => {
+      this.refreshEntityVisual(entity);
     });
-  });
-}
+
+    // 집/NPC는 채집 개념이 없으므로 기존 방식대로 실내/실외 여부만으로 판단
+    [this.houses, this.npcs].forEach(group => {
+      group.getChildren().forEach(obj => {
+        obj.setVisible(isActive);
+        obj.setActive(isActive);
+        obj.alpha = isActive ? 1 : 0;
+        if (obj.body) obj.body.enable = isActive;
+      });
+    });
+  }
+
+  // 오브젝트가 화면에 보여야 하는지를 한 곳에서 판단
+  // 실내에 있거나 채집/처치되어 리젠 대기 중이면 숨김 (두 조건을 한 함수로 합쳐 상태 충돌 방지)
+  refreshEntityVisual(entity) {
+    const shouldHide = this.isInsideHouse || entity.isHarvested;
+
+    entity.setVisible(!shouldHide);
+    entity.setActive(!shouldHide);
+    entity.alpha = shouldHide ? 0 : 1;
+    if (entity.body) entity.body.enable = !shouldHide;
+  }
 
   toggleHouse() {
     if (!this.isInsideHouse) {
@@ -411,6 +430,45 @@ setOutdoorObjectsActive(isActive) {
 
       this.player.x = this.currentHouse.x;
       this.player.y = this.currentHouse.y + 80;
+    }
+  }
+  // 캐릭터 이동 처리 (실내/실외 공통으로 재사용)
+  handleMovement() {
+    let velocityX = 0;
+    let velocityY = 0;
+    let direction = this.facingDirection; // 입력이 없으면 이전 방향을 그대로 유지
+
+    if (!this.isKnockedBack) {
+      if (this.cursors.left.isDown) {
+        velocityX = -this.moveSpeed;
+        direction = 'left';
+      } else if (this.cursors.right.isDown) {
+        velocityX = this.moveSpeed;
+        direction = 'right';
+      }
+
+      if (this.cursors.up.isDown) {
+        velocityY = -this.moveSpeed;
+        if (velocityX === 0) direction = 'up'; // 좌우 입력이 없을 때만 상하 방향 적용 (대각선 입력 시 좌우를 우선시함)
+      } else if (this.cursors.down.isDown) {
+        velocityY = this.moveSpeed;
+        if (velocityX === 0) direction = 'down';
+      }
+
+      this.player.body.setVelocity(velocityX, velocityY);
+
+      // 방향이 바뀌었을 때만 프레임을 전환 (매 프레임 setFrame 호출을 줄이기 위한 최소한의 조건)
+      if (direction !== this.facingDirection) {
+        this.player.setFrame(this.directionFrames[direction]);
+      }
+      this.facingDirection = direction; // 다음 프레임에도 같은 방향을 기억해두기 위해 저장
+    }
+  }
+
+  // 실내에 있을 때 H키로 나가기만 체크 (다른 실외 로직은 실행 안 함)
+  checkHouseExit() {
+    if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
+      this.toggleHouse();
     }
   }
 
@@ -541,6 +599,7 @@ setOutdoorObjectsActive(isActive) {
     entity.entityType = typeKey;
     entity.hp = info.hp;
     entity.maxHp = info.hp;
+    entity.isHarvested = false; // 채집/처치되어 리젠 대기 중인지 여부 (실내/실외와 별개)
 
     if (info.category === 'resource') {
       // 자원은 움직이지 않는 정적 물리 객체
@@ -570,6 +629,21 @@ setOutdoorObjectsActive(isActive) {
     if (side === 2) return { x: -30, y: Phaser.Math.Between(0, 600) };
     return { x: 830, y: Phaser.Math.Between(0, 600) };
   }
+
+  // NPC 오브젝트를 생성하는 통합 함수 - NPC_DATA에 항목만 추가하면 몇 명이든 생성 가능
+  createNpc(x, y, npcTypeKey) {
+    const info = NPC_DATA[npcTypeKey];
+
+    // NPC는 움직이지 않으므로 "아래를 보는" 프레임(1번)을 고정으로 사용
+    const npc = this.add.sprite(x, y, info.spriteKey, 1);
+    npc.setScale(5); // 플레이어와 동일한 배율 (16px 원본 -> 80px 표시)
+    npc.npcType = npcTypeKey;
+
+    this.physics.add.existing(npc, true); // 정적 물리 바디 (제자리 고정)
+
+    return npc;
+  }
+
   // 집 오브젝트를 생성하는 통합 함수 - BUILDING_TYPES 데이터만 있으면 몇 채든 생성 가능
   createHouse(x, y, typeKey) {
     const info = BUILDING_TYPES[typeKey];
