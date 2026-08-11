@@ -18,6 +18,8 @@ export class GameScene extends Phaser.Scene {
     this.hp = 100;
     this.gold = 0;
     this.dialogueIndex = 0;
+    this.lastDialogueNpc = null; // 직전에 대화한 NPC 종류 (NPC가 바뀌면 대사를 처음부터 다시 보여주기 위함)
+    this.dialogueTimer = null;   // 대화창 자동 숨김 타이머 (연속으로 말 걸었을 때 이전 타이머를 취소하기 위해 저장)
     this.isKnockedBack = false;
     this.nearbyNpc = null;
     this.facingDirection = 'down'; // 캐릭터가 마지막으로 바라본 방향 (멈췄을 때도 그 방향을 보여주기 위해 기억)
@@ -297,9 +299,32 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // E키로 근처 NPC와 상호작용 (현재는 상점 열기)
+    // E키로 근처 NPC와 상호작용 - 대사를 보여주고, 상점을 가진 NPC라면 상점도 함께 엶
     if (Phaser.Input.Keyboard.JustDown(this.eKey) && this.nearbyNpc) {
-      if (this.onShopToggle) this.onShopToggle();
+      const npcType = this.nearbyNpc.npcType;
+      const info = NPC_DATA[npcType];
+
+      // 이전과 다른 NPC와 대화를 시작했다면 대사를 처음부터 다시 보여줌
+      if (this.lastDialogueNpc !== npcType) {
+        this.dialogueIndex = 0;
+        this.lastDialogueNpc = npcType;
+      }
+
+      if (this.onDialogue) {
+        this.onDialogue(info.dialogues[this.dialogueIndex]);
+
+        // 연속으로 말 걸었을 때 이전 대화창의 숨김 타이머가 늦게 실행되지 않도록 취소 후 재설정
+        if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
+        this.dialogueTimer = setTimeout(() => {
+          if (this.onDialogue) this.onDialogue(null);
+        }, 3000);
+      }
+      this.dialogueIndex = (this.dialogueIndex + 1) % info.dialogues.length;
+
+      // 상점을 가진 NPC(villager1)일 때만 상점도 함께 엶
+      if (info.hasShop && this.onShopToggle) {
+        this.onShopToggle();
+      }
     }
 
     // 여러 집 중, 지금 캐릭터와 가장 가까운 집을 찾음
@@ -594,7 +619,7 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // 인벤토리에 있는 아이템을 실제로 사용 (예: 포션 마시기)
+  // 인벤토리에 있는 아이템을 실제로 사용 - 회복형(heal)과 스탯 강화형(attack/speed/maxHp)을 함께 처리
   useItem(itemId) {
     if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
 
@@ -602,8 +627,19 @@ export class GameScene extends Phaser.Scene {
     if (!item) return;
 
     this.inventory[itemId]--;
-    this.hp = Math.min(this.maxHp, this.hp + item.heal);
-    this.hpText.setText('HP: ' + this.hp);
+
+    if (item.effectType === 'heal') {
+      this.hp = Math.min(this.maxHp, this.hp + item.effectValue);
+      this.hpText.setText('HP: ' + this.hp);
+    } else if (item.effectType === 'attack') {
+      this.attackPower += item.effectValue;
+    } else if (item.effectType === 'speed') {
+      this.moveSpeed += item.effectValue;
+    } else if (item.effectType === 'maxHp') {
+      this.maxHp += item.effectValue;
+      this.hp += item.effectValue; // 최대체력이 늘어난 만큼 현재체력도 함께 회복시켜줌
+    }
+
     this.syncStatsToReact();
   }
 

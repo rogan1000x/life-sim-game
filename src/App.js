@@ -3,6 +3,15 @@ import { GameScene } from './GameScene';
 import { SHOP_ITEMS, ENTITY_TYPES } from './gameConfig';
 import Phaser from 'phaser';
 
+// 상점 아이템의 효과를 사람이 읽기 좋은 텍스트로 변환 (회복형/스탯 강화형 공통 처리)
+function getEffectLabel(item) {
+  if (item.effectType === 'heal') return `HP +${item.effectValue}`;
+  if (item.effectType === 'attack') return `공격력 +${item.effectValue}`;
+  if (item.effectType === 'speed') return `이동속도 +${item.effectValue}`;
+  if (item.effectType === 'maxHp') return `최대체력 +${item.effectValue}`;
+  return '';
+}
+
 function App() {
   const gameRef = useRef(null);
   const sceneRef = useRef(null); // GameScene 인스턴스에 직접 접근하기 위한 ref
@@ -27,6 +36,7 @@ function App() {
     // GameScene 안의 로직이 React 상태를 업데이트할 수 있도록 콜백 연결
     scene.onStatsUpdate = (stats) => setPlayerStats(stats);
     scene.onShopToggle = () => setShowShop(prev => !prev);
+    scene.onDialogue = (text) => setDialogue(text); // GameScene에서 대사를 보내주면 대화창 상태에 반영
 
     const config = {
       type: Phaser.AUTO,
@@ -197,7 +207,12 @@ function App() {
 
             return (
               <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
-                <span>{displayName}: {playerStats.inventory[key]}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {shopItem && shopItem.icon && (
+                    <img src={`/assets/shop/${shopItem.icon}`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
+                  )}
+                  {displayName}: {playerStats.inventory[key]}
+                </span>
                 {shopItem && (
                   <button onClick={() => sceneRef.current.useItem(key)} style={{ fontSize: '12px' }}>
                     사용
@@ -287,12 +302,17 @@ function App() {
               paddingBottom: '10px',
               borderBottom: '1px solid #333'
             }}>
-              <span>{item.name} (HP +{item.heal})</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {item.icon && (
+                  <img src={`/assets/shop/${item.icon}`} alt="" style={{ width: '28px', height: '28px', imageRendering: 'pixelated' }} />
+                )}
+                {item.name} ({getEffectLabel(item)})
+              </span>
               <button
                 onClick={() => sceneRef.current.buyItem(item)}
                 disabled={playerStats.gold < item.price}
               >
-                {item.price} G
+                {item.price}
               </button>
             </div>
           ))}

@@ -36,6 +36,7 @@ export const NPC_DATA = {
   villager1: {
     name: '마을 주민',
     spriteKey: 'npc_villager1',
+    hasShop: true, // 이 NPC만 상점을 열 수 있음 (기존 단일 NPC 시절의 상점 기능을 그대로 유지)
     dialogues: [
       '안녕하세요! 오늘 날씨가 좋네요.',
       '이 근처에 나무와 돌이 많으니 채집해보세요.',
@@ -45,14 +46,16 @@ export const NPC_DATA = {
   villager2: {
     name: '수다쟁이 이웃',
     spriteKey: 'npc_villager2',
+    hasShop: false, // 상점 없이 대화만 가능
     dialogues: [
       '요즘 마을에 새로운 사람들이 늘고 있어요.',
       '저기 저 집 보이시죠? 제법 아늑하답니다.'
     ]
   },
-  villager3: {
+villager3: {
     name: '떠돌이 여행자',
     spriteKey: 'npc_villager3',
+    hasShop: false, // 상점 없이 대화만 가능
     dialogues: [
       '이곳저곳 돌아다니는 걸 좋아해요.',
       '토끼는 순하지만 늑대는 정말 조심해야 해요.'
@@ -61,9 +64,18 @@ export const NPC_DATA = {
 };
 
 // 상점에서 구매 가능한 아이템 목록
+// effectType으로 회복형(heal)과 스탯 강화형(attack/speed/maxHp)을 구분함
+// icon은 React 쪽(App.js)에서 public/assets/shop/ 경로로 직접 불러오는 이미지 파일명
 export const SHOP_ITEMS = [
-  { id: 'potion_small', name: '작은 포션', price: 20, heal: 30 },
-  { id: 'potion_large', name: '큰 포션', price: 50, heal: 100 }
+  { id: 'potion_small', name: '작은 포션', price: 20, effectType: 'heal', effectValue: 30, icon: null },
+  { id: 'potion_large', name: '큰 포션', price: 50, effectType: 'heal', effectValue: 100, icon: null },
+  { id: 'item_pickaxe', name: '낡은 곡괭이', price: 30, effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
+  { id: 'item_gadget', name: '수상한 부품', price: 25, effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
+  { id: 'item_wrench', name: '만능 렌치', price: 50, effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
+  { id: 'item_signpost', name: '이정표', price: 40, effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
+  { id: 'item_stopsign', name: '경고 표지판', price: 60, effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
+  { id: 'item_crosssign', name: '교차로 표지판', price: 70, effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
+  { id: 'item_streetlamp', name: '가로등 부품', price: 90, effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' }
 ];
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
