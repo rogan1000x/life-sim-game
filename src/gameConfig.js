@@ -66,16 +66,48 @@ export const SHOP_ITEMS = [
   { id: 'potion_large', name: '큰 포션', price: 50, heal: 100 }
 ];
 
-// 건물(집) 종류 정의 - 나중에 상점 건물, 동료 집 등을 여기에 추가하면 됨
+// 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
+// 집마다 다른 조합을 줄 수 있음. 새 집을 늘리려면 여기에 항목만 추가하고
+// GameScene의 housePositions 배열에 위치만 추가하면 됨
 export const BUILDING_TYPES = {
   myHouse: {
     name: '내 집',
-    color: 0x8b5a2b,   // 실외에서 보이는 건물 색
+    color: 0x8b5a2b,       // 실외에서 보이는 건물 색
     width: 100,
     height: 80,
-    interiorColor: '#3a2a1a', // 실내 배경색
+    floorTile: 'floor_wood', // 실내 바닥에 반복해서 채울 타일 이미지
     furniture: [
-      { type: 'bed', x: 400, y: 200, width: 120, height: 60, color: 0x5a3a2a }
+      { spriteKey: 'furn_couch', x: 400, y: 200, scale: 4 }
+    ]
+  },
+  house2: {
+    name: '이웃집',
+    color: 0x6b7a8b,
+    width: 100,
+    height: 80,
+    floorTile: 'floor_gray',
+    furniture: [
+      { spriteKey: 'furn_dresser1', x: 400, y: 200, scale: 4 }
+    ]
+  },
+  house3: {
+    name: '여행자의 집',
+    color: 0x8b5a2b,
+    width: 100,
+    height: 80,
+    floorTile: 'floor_wood',
+    furniture: [
+      { spriteKey: 'furn_dresser2', x: 400, y: 200, scale: 4 }
+    ]
+  },
+  house4: {
+    name: '창고',
+    color: 0x6b7a8b,
+    width: 100,
+    height: 80,
+    floorTile: 'floor_gray',
+    furniture: [
+      { spriteKey: 'furn_shelf_green', x: 400, y: 200, scale: 4 }
     ]
   }
 };

@@ -30,6 +30,7 @@ export class GameScene extends Phaser.Scene {
     this.nearbyHouse = null;      // 근처에 있는 집 오브젝트 (여러 채 중 하나)
     this.currentHouse = null;     // 현재 들어와있는 집 (나갈 때 위치 복원용)
     this.furnitureObjects = [];   // 실내에 생성된 가구 오브젝트들 (전환마다 재사용)
+    this.floorTileSprite = null;  // 실내 바닥 타일 오브젝트 (집마다 다른 바닥으로 교체됨)
 
     // React와 연결하기 위한 콜백 함수들 (App.js에서 설정해줌)
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
@@ -49,6 +50,16 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('npc_villager1', 'assets/npc/npc_villager1.png', { frameWidth: 16, frameHeight: 16 });
     this.load.spritesheet('npc_villager2', 'assets/npc/npc_villager2.png', { frameWidth: 16, frameHeight: 16 });
     this.load.spritesheet('npc_villager3', 'assets/npc/npc_villager3.png', { frameWidth: 16, frameHeight: 16 });
+
+    // 집 내부 바닥 타일 (tileSprite로 반복 배치할 것이라 이미지 하나만 있으면 됨)
+    this.load.image('floor_wood', 'assets/tiles/floor_wood.png');
+    this.load.image('floor_gray', 'assets/tiles/floor_gray.png');
+
+    // 집 내부 가구 이미지들
+    this.load.image('furn_couch', 'assets/tiles/furn_couch.png');
+    this.load.image('furn_dresser1', 'assets/tiles/furn_dresser1.png');
+    this.load.image('furn_dresser2', 'assets/tiles/furn_dresser2.png');
+    this.load.image('furn_shelf_green', 'assets/tiles/furn_shelf_green.png');
   }
 
   // Scene이 시작될 때 한 번 실행 - 게임 오브젝트들을 배치
@@ -165,9 +176,12 @@ export class GameScene extends Phaser.Scene {
     // 집들을 그룹으로 관리 - 여러 채를 배치해도 같은 로직으로 처리 가능
     this.houses = this.add.group();
 
-    // 집 배치 목록 (나중에 여러 채 추가하려면 이 배열에 항목만 추가하면 됨)
+    // 집 배치 목록 - 바닥/가구 조합이 다른 4채를 배치 (겹치지 않게 좌표 분산)
     const housePositions = [
-      { x: 650, y: 450, type: 'myHouse' }
+      { x: 650, y: 450, type: 'myHouse' },
+      { x: 700, y: 150, type: 'house2' },
+      { x: 100, y: 500, type: 'house3' },
+      { x: 50, y: 50, type: 'house4' }
     ];
 
     housePositions.forEach(pos => {
@@ -399,7 +413,6 @@ export class GameScene extends Phaser.Scene {
       const info = BUILDING_TYPES[this.currentHouse.buildingType];
 
       this.isInsideHouse = true;
-      this.cameras.main.setBackgroundColor(info.interiorColor);
 
       // 실외 오브젝트들을 각각 순회하며 확실히 숨기고 충돌도 비활성화
       this.setOutdoorObjectsActive(false);
@@ -407,11 +420,18 @@ export class GameScene extends Phaser.Scene {
       this.player.x = 400;
       this.player.y = 400;
 
+      // 바닥 타일을 화면 전체 크기로 반복 배치 (tileSprite는 이미지 한 장으로도 넓은 영역을 채울 수 있음)
+      // 이전에 들어왔던 집의 바닥이 남아있지 않도록 매번 새로 만들기 전에 제거
+      if (this.floorTileSprite) this.floorTileSprite.destroy();
+      this.floorTileSprite = this.add.tileSprite(400, 300, 800, 600, info.floorTile);
+      this.floorTileSprite.setDepth(-1); // 캐릭터/가구보다 뒤쪽에 그려지도록
+
       this.furnitureObjects.forEach(f => f.destroy());
       this.furnitureObjects = [];
 
       info.furniture.forEach(item => {
-        const furniture = this.add.rectangle(item.x, item.y, item.width, item.height, item.color);
+        const furniture = this.add.sprite(item.x, item.y, item.spriteKey);
+        furniture.setScale(item.scale || 4);
         this.physics.add.existing(furniture, true);
         this.physics.add.collider(this.player, furniture);
         this.furnitureObjects.push(furniture);
@@ -421,6 +441,12 @@ export class GameScene extends Phaser.Scene {
       // ===== 실외 복귀 =====
       this.isInsideHouse = false;
       this.cameras.main.setBackgroundColor('#4a7c3c');
+
+      // 실내 바닥 타일 제거 (다음에 다른 집에 들어갔을 때 이전 바닥이 남지 않도록)
+      if (this.floorTileSprite) {
+        this.floorTileSprite.destroy();
+        this.floorTileSprite = null;
+      }
 
       // 실외 오브젝트들을 다시 보이게 하고 충돌도 복원
       this.setOutdoorObjectsActive(true);
