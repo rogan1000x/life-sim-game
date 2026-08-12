@@ -65,18 +65,19 @@ villager3: {
 };
 
 // 상점에서 구매 가능한 아이템 목록
-// effectType으로 회복형(heal)과 스탯 강화형(attack/speed/maxHp)을 구분함
-// icon은 React 쪽(App.js)에서 public/assets/shop/ 경로로 직접 불러오는 이미지 파일명
+// category: 'consumable'(즉시 사용/소모) 또는 'equipment'(장착/해제, 장착 중일 때만 효과 적용)
+// equipment는 slot(장착 부위)을 가짐 - 지금은 weapon 하나뿐이지만 나중에 방어구 등으로 확장 가능
+// 내구도 시스템은 추후 추가 예정 (지금은 장착/해제 기반까지만 구현)
 export const SHOP_ITEMS = [
-  { id: 'potion_small', name: '작은 포션', price: 20, effectType: 'heal', effectValue: 30, icon: null },
-  { id: 'potion_large', name: '큰 포션', price: 50, effectType: 'heal', effectValue: 100, icon: null },
-  { id: 'item_pickaxe', name: '낡은 곡괭이', price: 30, effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
-  { id: 'item_gadget', name: '수상한 부품', price: 25, effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
-  { id: 'item_wrench', name: '만능 렌치', price: 50, effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
-  { id: 'item_signpost', name: '이정표', price: 40, effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
-  { id: 'item_stopsign', name: '경고 표지판', price: 60, effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
-  { id: 'item_crosssign', name: '교차로 표지판', price: 70, effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
-  { id: 'item_streetlamp', name: '가로등 부품', price: 90, effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' }
+  { id: 'potion_small', name: '작은 포션', price: 20, category: 'consumable', effectType: 'heal', effectValue: 30, icon: null },
+  { id: 'potion_large', name: '큰 포션', price: 50, category: 'consumable', effectType: 'heal', effectValue: 100, icon: null },
+  { id: 'item_pickaxe', name: '낡은 곡괭이', price: 30, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
+  { id: 'item_gadget', name: '수상한 부품', price: 25, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
+  { id: 'item_wrench', name: '만능 렌치', price: 50, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
+  { id: 'item_signpost', name: '이정표', price: 40, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
+  { id: 'item_stopsign', name: '경고 표지판', price: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
+  { id: 'item_crosssign', name: '교차로 표지판', price: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
+  { id: 'item_streetlamp', name: '가로등 부품', price: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' }
 ];
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로

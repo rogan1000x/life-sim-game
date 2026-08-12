@@ -23,6 +23,8 @@ export class GameScene extends Phaser.Scene {
     this.gameMinutes = 480;      // 게임 속 현재 시각 (분 단위, 480 = 08:00부터 시작)
     this.currentDay = 1;         // 게임 속 날짜
     this.nightIntensity = 0;     // 밤의 깊이 (0=낮, 0.6=한밤중) - 몬스터 강화 배율 계산에 사용
+    this.equipped = { weapon: null }; // 슬롯별 장착 중인 아이템 id (지금은 weapon 슬롯만 존재)
+    this.isDead = false;         // 사망 후 부활 대기 중인지 여부 (중복 사망 처리 방지용)
     this.isKnockedBack = false;
     this.nearbyNpc = null;
     this.facingDirection = 'down'; // 캐릭터가 마지막으로 바라본 방향 (멈췄을 때도 그 방향을 보여주기 위해 기억)
@@ -159,8 +161,10 @@ export class GameScene extends Phaser.Scene {
       this.playHitSound();
 
       // 이 공격으로 사망했다면, 어떤 몬스터에게 당했는지 알림으로 남김
-      if (this.hp <= 0) {
-        this.addLog(`${info.name}에게 당했습니다...`, 'death');
+      // 이 공격으로 사망했다면 사망 패널티 처리 (isDead로 중복 처리 방지)
+      if (this.hp <= 0 && !this.isDead) {
+        this.isDead = true;
+        this.handleDeath(info.name);
       }
 
       this.player.setTint(0xff0000);
@@ -441,7 +445,7 @@ export class GameScene extends Phaser.Scene {
       level: this.level, exp: this.exp, hp: this.hp, maxHp: this.maxHp,
       statPoints: this.statPoints, attackPower: this.attackPower,
       moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory,
-      gameMinutes: this.gameMinutes, currentDay: this.currentDay
+      gameMinutes: this.gameMinutes, currentDay: this.currentDay, equipped: this.equipped
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -588,7 +592,8 @@ export class GameScene extends Phaser.Scene {
         attackPower: this.attackPower,
         moveSpeed: this.moveSpeed,
         gold: this.gold,
-        inventory: { ...this.inventory }
+        inventory: { ...this.inventory },
+        equipped: { ...this.equipped }
       });
     }
     this.saveGame();
@@ -651,6 +656,40 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
+  // 사망 패널티 처리: 경험치 일부 손실, 조건에 따라 레벨 다운 + 스탯 소폭 감소, 잠시 후 자동 부활
+  handleDeath(killerName) {
+    this.addLog(`${killerName}에게 당했습니다...`, 'death');
+
+    // 현재 레벨의 필요 경험치 중 30%를 잃음
+    const expNeeded = this.level * 100;
+    this.exp -= Math.floor(expNeeded * 0.3);
+
+    if (this.exp < 0 && this.level > 1) {
+      // 경험치가 모자라면 레벨이 하나 내려가고, 그만큼 스탯도 소폭 감소함 (최소치 밑으로는 안 내려가게 방어)
+      this.level--;
+      this.exp = 0;
+      this.attackPower = Math.max(10, this.attackPower - 2);
+      this.moveSpeed = Math.max(200, this.moveSpeed - 5);
+      this.maxHp = Math.max(100, this.maxHp - 10);
+      this.addLog(`레벨이 ${this.level + 1} → ${this.level}로 떨어졌습니다`, 'death');
+    } else if (this.exp < 0) {
+      this.exp = 0; // 이미 1레벨이면 경험치만 0으로 유지
+    }
+
+    this.syncStatsToReact();
+
+    // 2초 뒤 자동으로 부활 (Admin 패널 없이도 게임이 멈추지 않도록)
+    this.time.delayedCall(2000, () => {
+      this.hp = this.maxHp;
+      this.player.x = 400;
+      this.player.y = 300;
+      this.isDead = false;
+      this.hpText.setText('HP: ' + this.hp);
+      this.addLog('다시 일어났습니다', 'gain');
+      this.syncStatsToReact();
+    });
+  }
+
   // Admin 패널의 부활 버튼용 - HP를 최대치로 즉시 회복
   revivePlayer() {
     this.hp = this.maxHp;
@@ -673,13 +712,13 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // 인벤토리에 있는 아이템을 실제로 사용 - 회복형(heal)과 스탯 강화형(attack/speed/maxHp)을 함께 처리
+  // 인벤토리에 있는 소모품(회복 포션 등)을 사용 - 장비(equipment)는 이 함수 대신 equipItem/unequipItem으로 처리함
   // quantity를 넘기면 여러 개를 한 번에 사용 (Shift+클릭용). 보유량보다 많이 요청해도 가진 만큼만 사용함
   useItem(itemId, quantity = 1) {
     if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
 
     const item = SHOP_ITEMS.find(i => i.id === itemId);
-    if (!item) return;
+    if (!item || item.category !== 'consumable') return;
 
     const useQty = Math.min(quantity, this.inventory[itemId]);
     this.inventory[itemId] -= useQty;
@@ -687,16 +726,52 @@ export class GameScene extends Phaser.Scene {
     if (item.effectType === 'heal') {
       this.hp = Math.min(this.maxHp, this.hp + item.effectValue * useQty);
       this.hpText.setText('HP: ' + this.hp);
-    } else if (item.effectType === 'attack') {
-      this.attackPower += item.effectValue * useQty;
-    } else if (item.effectType === 'speed') {
-      this.moveSpeed += item.effectValue * useQty;
-    } else if (item.effectType === 'maxHp') {
-      this.maxHp += item.effectValue * useQty;
-      this.hp += item.effectValue * useQty;
     }
 
     this.syncStatsToReact();
+  }
+
+  // 장비 장착 - 같은 슬롯에 이미 장착된 게 있으면 먼저 해제(효과 되돌리기)한 뒤 새로 장착함
+  // 소모품과 달리 인벤토리에서 사라지지 않고, 장착 중인 동안만 효과가 적용됨
+  equipItem(itemId) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item || item.category !== 'equipment') return;
+    if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
+
+    const slot = item.slot;
+    if (this.equipped[slot]) {
+      this.applyEquipEffect(this.equipped[slot], -1); // 기존 장비 효과 제거
+    }
+    this.equipped[slot] = itemId;
+    this.applyEquipEffect(itemId, 1); // 새 장비 효과 적용
+
+    this.syncStatsToReact();
+  }
+
+  // 장비 해제 - 해당 슬롯을 비우고 효과를 되돌림
+  unequipItem(slot) {
+    const itemId = this.equipped[slot];
+    if (!itemId) return;
+
+    this.applyEquipEffect(itemId, -1);
+    this.equipped[slot] = null;
+
+    this.syncStatsToReact();
+  }
+
+  // direction: 1이면 장착(효과 더하기), -1이면 해제(효과 빼기) - 장착/해제 로직을 하나로 재사용하기 위한 헬퍼
+  applyEquipEffect(itemId, direction) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item) return;
+
+    if (item.effectType === 'attack') {
+      this.attackPower += item.effectValue * direction;
+    } else if (item.effectType === 'speed') {
+      this.moveSpeed += item.effectValue * direction;
+    } else if (item.effectType === 'maxHp') {
+      this.maxHp += item.effectValue * direction;
+      this.hp = Math.max(0, Math.min(this.hp + item.effectValue * direction, this.maxHp));
+    }
   }
 
   // 채집한 자원/몬스터를 인벤토리에 추가
@@ -796,6 +871,18 @@ export class GameScene extends Phaser.Scene {
     npc.npcType = npcTypeKey;
 
     this.physics.add.existing(npc, true); // 정적 물리 바디 (제자리 고정)
+
+    // 걷기 프레임이 없는 에셋이라도, 제자리에서 살짝 위아래로 흔들리게 하면
+    // 정지된 느낌 대신 "숨쉬는" 느낌을 줄 수 있음 (새 이미지 없이 코드만으로 구현)
+    // 물리 바디는 이 흔들림을 따라가지 않지만, 흔들리는 폭이 작아 충돌 판정엔 거의 영향 없음
+    this.tweens.add({
+      targets: npc,
+      y: y - 4,
+      duration: 700 + Math.random() * 300, // NPC마다 흔들리는 주기를 살짝 다르게 해서 기계적으로 안 보이게 함
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
 
     return npc;
   }
