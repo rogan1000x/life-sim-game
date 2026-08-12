@@ -26,6 +26,17 @@ function App() {
   const [dialogue, setDialogue] = useState(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [showShop, setShowShop] = useState(false);
+  const [logs, setLogs] = useState([]); // 몬스터 처치/아이템 획득/사망 등 이벤트 알림 목록
+
+
+  // 이벤트를 알림창에 추가하고, 3초 후 자동으로 사라지게 함
+  const addLog = (text, type) => {
+    const id = Date.now() + Math.random(); // 같은 타이밍에 로그가 여러 개 쌓여도 구분되도록 고유 id 부여
+    setLogs(prev => [...prev, { id, text, type }]);
+    setTimeout(() => {
+      setLogs(prev => prev.filter(log => log.id !== id));
+    }, 3000);
+  };
 
   // 게임 시작 버튼을 눌렀을 때만 Phaser 게임을 생성
   useEffect(() => {
@@ -37,6 +48,7 @@ function App() {
     scene.onStatsUpdate = (stats) => setPlayerStats(stats);
     scene.onShopToggle = () => setShowShop(prev => !prev);
     scene.onDialogue = (text) => setDialogue(text); // GameScene에서 대사를 보내주면 대화창 상태에 반영
+    scene.onLog = (text, type) => addLog(text, type); // GameScene에서 이벤트가 발생하면 알림창에 기록
 
     const config = {
       type: Phaser.AUTO,
@@ -169,7 +181,36 @@ function App() {
       minHeight: '100vh',
       paddingTop: '20px'
     }}>
-      <div id="phaser-game" style={{ width: '800px', height: '600px', flexShrink: 0 }}></div>
+      <div id="phaser-game" style={{ width: '800px', height: '600px', flexShrink: 0, position: 'relative' }}>
+        {/* 몬스터 처치/아이템 획득/사망 알림 - 게임 화면 안쪽에 고정되어 오른쪽 사이드바와 겹치지 않음 */}
+        <div style={{
+          position: 'absolute',
+          top: '60px',
+          right: '10px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
+          zIndex: 500,
+          fontFamily: 'monospace',
+          pointerEvents: 'none'
+        }}>
+          {logs.map(log => (
+            <div key={log.id} style={{
+              padding: '8px 14px',
+              borderRadius: '6px',
+              fontSize: '14px',
+              color: 'white',
+              backgroundColor:
+                log.type === 'kill' ? 'rgba(180,60,20,0.9)' :
+                log.type === 'gain' ? 'rgba(40,120,60,0.9)' :
+                log.type === 'death' ? 'rgba(150,0,0,0.95)' :
+                'rgba(0,0,0,0.85)'
+            }}>
+              {log.text}
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div style={{
         width: '250px',

@@ -5,7 +5,8 @@ export const GAME_CONFIG = {
   rabbitCount: 3,
   wolfCount: 4,
   wolfRespawnMin: 5000, // 늑대 리스폰 최소 시간(ms)
-  wolfRespawnMax: 10000 // 늑대 리스폰 최대 시간(ms)
+  wolfRespawnMax: 10000, // 늑대 리스폰 최대 시간(ms)
+  dayLengthSeconds: 300 // 게임 속 하루(24시간)가 현실 300초(5분) 동안 흐름 - 테스트하기 좋게 짧게 잡음
 };
 
 // 자원/동물/몬스터 등 게임 안의 모든 상호작용 오브젝트 정의

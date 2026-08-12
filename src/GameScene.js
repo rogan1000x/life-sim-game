@@ -20,6 +20,9 @@ export class GameScene extends Phaser.Scene {
     this.dialogueIndex = 0;
     this.lastDialogueNpc = null; // 직전에 대화한 NPC 종류 (NPC가 바뀌면 대사를 처음부터 다시 보여주기 위함)
     this.dialogueTimer = null;   // 대화창 자동 숨김 타이머 (연속으로 말 걸었을 때 이전 타이머를 취소하기 위해 저장)
+    this.gameMinutes = 480;      // 게임 속 현재 시각 (분 단위, 480 = 08:00부터 시작)
+    this.currentDay = 1;         // 게임 속 날짜
+    this.nightIntensity = 0;     // 밤의 깊이 (0=낮, 0.6=한밤중) - 몬스터 강화 배율 계산에 사용
     this.isKnockedBack = false;
     this.nearbyNpc = null;
     this.facingDirection = 'down'; // 캐릭터가 마지막으로 바라본 방향 (멈췄을 때도 그 방향을 보여주기 위해 기억)
@@ -38,6 +41,7 @@ export class GameScene extends Phaser.Scene {
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
     this.onDialogue = null;    // 대화창 표시 함수
     this.onShopToggle = null;  // 상점 열기/닫기 함수
+    this.onLog = null;         // 몬스터 처치/아이템 획득/사망 등 이벤트를 알림창에 전달하는 함수
     this.godMode = false;      // Admin 무적 모드 (App.js에서 값 변경)
   }
 
@@ -81,6 +85,9 @@ export class GameScene extends Phaser.Scene {
       this.moveSpeed = data.moveSpeed;
       this.gold = data.gold;
       this.inventory = data.inventory;
+      // 예전 저장 파일에는 이 값이 없을 수 있어 undefined 체크 후 있을 때만 덮어씀
+      if (data.gameMinutes !== undefined) this.gameMinutes = data.gameMinutes;
+      if (data.currentDay !== undefined) this.currentDay = data.currentDay;
     }
 
     // 배경 격자무늬
@@ -143,10 +150,18 @@ export class GameScene extends Phaser.Scene {
       if (this.godMode) return; // Admin 무적 모드면 데미지 무시
       if (this.hp <= 0) return; // 이미 죽었으면 중복 데미지 방지
 
-      this.hp -= info.damage;
+      // 밤에는 늑대의 공격력이 최대 1.5배까지 강해짐 (한밤중이 가장 위험)
+      const nightMultiplier = this.getNightMonsterMultiplier();
+      const actualDamage = Math.round(info.damage * nightMultiplier);
+      this.hp -= actualDamage;
       this.hp = Math.max(0, this.hp);
       this.hpText.setText('HP: ' + this.hp);
       this.playHitSound();
+
+      // 이 공격으로 사망했다면, 어떤 몬스터에게 당했는지 알림으로 남김
+      if (this.hp <= 0) {
+        this.addLog(`${info.name}에게 당했습니다...`, 'death');
+      }
 
       this.player.setTint(0xff0000);
       this.time.delayedCall(150, () => this.player.clearTint());
@@ -195,12 +210,31 @@ export class GameScene extends Phaser.Scene {
       color: '#ff4444'
     });
 
+    // 날짜/시간 표시 - 화면에 고정되어 카메라를 따라다니지 않도록 setScrollFactor(0) 적용
+    this.timeText = this.add.text(600, 20, '', {
+      fontSize: '18px',
+      color: '#ffffff',
+      backgroundColor: '#00000088',
+      padding: { x: 8, y: 4 }
+    });
+    this.timeText.setScrollFactor(0);
+    this.timeText.setDepth(1000); // 밤 오버레이보다 위에 그려져서 글자가 항상 잘 보이도록
+
+    // 밤을 표현하는 화면 전체 어두운 오버레이 - 매 프레임 투명도만 바꿔서 밤낮을 표현
+    this.nightOverlay = this.add.rectangle(400, 300, 800, 600, 0x000033);
+    this.nightOverlay.setScrollFactor(0);
+    this.nightOverlay.setDepth(999); // 게임 오브젝트들보다는 위, 시간 텍스트보다는 아래
+    this.nightOverlay.setAlpha(0);
+
     this.syncStatsToReact();
   }
 
   // 매 프레임(1초에 약 60번) 반복 실행되는 게임 로직
-  update() {
+  // delta: 직전 프레임 이후 실제로 지난 시간(ms) - 시간 시스템 계산에 사용
+  update(time, delta) {
     if (this.hp <= 0) return; // 죽었으면 모든 조작 무시
+
+    this.updateGameClock(delta); // 실내/실외 상관없이 시간은 항상 흐르게 함
 
     // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
     if (this.isInsideHouse) {
@@ -215,13 +249,21 @@ export class GameScene extends Phaser.Scene {
     this.entities.getChildren().forEach(entity => {
       if (!entity.active) return;
       const info = ENTITY_TYPES[entity.entityType];
-
       if (info.category === 'hostile_monster') {
+        const nightMultiplier = this.getNightMonsterMultiplier();
         const angle = Phaser.Math.Angle.Between(entity.x, entity.y, this.player.x, this.player.y);
         entity.body.setVelocity(
-          Math.cos(angle) * info.speed,
-          Math.sin(angle) * info.speed
+          Math.cos(angle) * info.speed * nightMultiplier,
+          Math.sin(angle) * info.speed * nightMultiplier
         );
+
+        // 밤이 깊을수록(nightIntensity > 0.3) 색을 붉게 바꿔 위험 상태를 시각적으로 알려줌
+        // circle로 만든 도형이라 이미지 전용 기능인 setTint 대신 setFillStyle로 색 자체를 바꿔야 함
+        if (this.nightIntensity > 0.3) {
+          entity.setFillStyle(0xff2222);
+        } else {
+          entity.setFillStyle(info.color);
+        }
       }
     });
 
@@ -249,6 +291,7 @@ export class GameScene extends Phaser.Scene {
 
           this.gold += info.sellPrice;
           this.syncStatsToReact();
+          this.addLog(`${info.name} 획득 (+${info.sellPrice}G)`, 'gain');
 
           this.createParticleBurst(entity.x, entity.y, info.color);
 
@@ -274,6 +317,7 @@ export class GameScene extends Phaser.Scene {
 
             this.gold += info.sellPrice;
             this.syncStatsToReact();
+            this.addLog(`${info.name} 처치! (+${info.exp} EXP, +${info.sellPrice}G)`, 'kill');
 
             this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
 
@@ -396,7 +440,8 @@ export class GameScene extends Phaser.Scene {
     const saveData = {
       level: this.level, exp: this.exp, hp: this.hp, maxHp: this.maxHp,
       statPoints: this.statPoints, attackPower: this.attackPower,
-      moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory
+      moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory,
+      gameMinutes: this.gameMinutes, currentDay: this.currentDay
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -525,6 +570,11 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // 게임 이벤트를 React 쪽 알림창에 전달 (처치/획득/사망 등). type에 따라 알림 색이 달라짐
+  addLog(text, type = 'info') {
+    if (this.onLog) this.onLog(text, type);
+  }
+
   // 상태가 바뀔 때마다 React 쪽(App.js)에 최신 값을 전달 + 자동 저장
   syncStatsToReact() {
     if (this.onStatsUpdate) {
@@ -608,7 +658,7 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-// 상점에서 아이템 구매 - 즉시 사용하지 않고 인벤토리에 저장만 함
+  // 상점에서 아이템 구매 - 즉시 사용하지 않고 인벤토리에 저장만 함
   // quantity를 넘기면 여러 개를 한 번에 구매 (Shift+클릭용). 골드가 부족하면 살 수 있는 만큼만 구매함
   buyItem(item, quantity = 1) {
     const affordableQty = Math.min(quantity, Math.floor(this.gold / item.price));
@@ -687,6 +737,44 @@ export class GameScene extends Phaser.Scene {
     }
 
     return entity;
+  }
+
+  // 실제 경과 시간(delta, ms)을 게임 내 시간(분)으로 환산해 누적하고,
+  // 화면의 시간 텍스트와 밤 오버레이 투명도를 매 프레임 갱신함
+  updateGameClock(delta) {
+    const gameMinutesPerRealSecond = 1440 / GAME_CONFIG.dayLengthSeconds; // 하루(1440분)를 dayLengthSeconds초에 맞추기 위한 환산 비율
+    this.gameMinutes += gameMinutesPerRealSecond * (delta / 1000);
+
+    if (this.gameMinutes >= 1440) {
+      this.gameMinutes -= 1440;
+      this.currentDay++;
+    }
+
+    const hour = Math.floor(this.gameMinutes / 60);
+    const minute = Math.floor(this.gameMinutes % 60);
+    this.timeText.setText(`Day ${this.currentDay}  ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+
+    // 몬스터 강화는 플레이어가 실내에 있어도 실외의 몬스터에게는 그대로 적용되어야 하므로
+    // 화면 오버레이(alpha)와 별개로 실제 밤 깊이를 항상 계산해서 저장해둠
+    this.nightIntensity = this.getNightAlpha(this.gameMinutes / 60);
+
+    // 실내에서는 조명이 있다고 가정하고 화면은 항상 밝게 유지, 실외일 때만 오버레이로 어둡게 표시
+    const alpha = this.isInsideHouse ? 0 : this.nightIntensity;
+    this.nightOverlay.setAlpha(alpha);
+  }
+
+  // 시간대(0~24시, 소수 가능)에 따라 밤 오버레이의 진하기(0~0.6)를 계산
+  // 8~18시는 낮(0), 18~20시는 저녁으로 점점 어두워짐, 20~다음날 6시는 밤(최대 0.6), 6~8시는 새벽으로 점점 밝아짐
+  getNightAlpha(hour) {
+    if (hour >= 8 && hour < 18) return 0;
+    if (hour >= 18 && hour < 20) return (hour - 18) / 2 * 0.6;
+    if (hour >= 6 && hour < 8) return 0.6 - (hour - 6) / 2 * 0.6;
+    return 0.6;
+  }
+
+  // 밤 깊이(0~0.6)를 몬스터 강화 배율(1.0~1.5)로 변환 - 한밤중일수록 더 강해짐
+  getNightMonsterMultiplier() {
+    return 1 + (this.nightIntensity / 0.6) * 0.5;
   }
 
   // 동물이 화면 안이 아니라 "화면 밖 가장자리"에서 등장하도록 좌표를 계산
