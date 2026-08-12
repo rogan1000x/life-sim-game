@@ -294,7 +294,9 @@ export class GameScene extends Phaser.Scene {
     this.nearbyNpc = null;
     this.npcs.getChildren().forEach(npc => {
       const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y);
-      if (distance < 80) {
+      // 캐릭터와 NPC 둘 다 80px 크기라, 충돌로 붙을 수 있는 최소 거리가 이미 80에 가까움
+      // 여유를 두기 위해 기준을 100으로 올림 (집의 상호작용 거리와 동일하게 맞춤)
+      if (distance < 100) {
         this.nearbyNpc = npc;
       }
     });
@@ -606,38 +608,42 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // 상점에서 아이템 구매 - 즉시 사용하지 않고 인벤토리에 저장만 함
-  buyItem(item) {
-    if (this.gold < item.price) return;
+// 상점에서 아이템 구매 - 즉시 사용하지 않고 인벤토리에 저장만 함
+  // quantity를 넘기면 여러 개를 한 번에 구매 (Shift+클릭용). 골드가 부족하면 살 수 있는 만큼만 구매함
+  buyItem(item, quantity = 1) {
+    const affordableQty = Math.min(quantity, Math.floor(this.gold / item.price));
+    if (affordableQty <= 0) return;
 
-    this.gold -= item.price;
+    this.gold -= item.price * affordableQty;
     if (!this.inventory[item.id]) {
       this.inventory[item.id] = 0;
     }
-    this.inventory[item.id]++;
+    this.inventory[item.id] += affordableQty;
 
     this.syncStatsToReact();
   }
 
   // 인벤토리에 있는 아이템을 실제로 사용 - 회복형(heal)과 스탯 강화형(attack/speed/maxHp)을 함께 처리
-  useItem(itemId) {
+  // quantity를 넘기면 여러 개를 한 번에 사용 (Shift+클릭용). 보유량보다 많이 요청해도 가진 만큼만 사용함
+  useItem(itemId, quantity = 1) {
     if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
 
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return;
 
-    this.inventory[itemId]--;
+    const useQty = Math.min(quantity, this.inventory[itemId]);
+    this.inventory[itemId] -= useQty;
 
     if (item.effectType === 'heal') {
-      this.hp = Math.min(this.maxHp, this.hp + item.effectValue);
+      this.hp = Math.min(this.maxHp, this.hp + item.effectValue * useQty);
       this.hpText.setText('HP: ' + this.hp);
     } else if (item.effectType === 'attack') {
-      this.attackPower += item.effectValue;
+      this.attackPower += item.effectValue * useQty;
     } else if (item.effectType === 'speed') {
-      this.moveSpeed += item.effectValue;
+      this.moveSpeed += item.effectValue * useQty;
     } else if (item.effectType === 'maxHp') {
-      this.maxHp += item.effectValue;
-      this.hp += item.effectValue; // 최대체력이 늘어난 만큼 현재체력도 함께 회복시켜줌
+      this.maxHp += item.effectValue * useQty;
+      this.hp += item.effectValue * useQty;
     }
 
     this.syncStatsToReact();

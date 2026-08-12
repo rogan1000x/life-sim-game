@@ -214,7 +214,11 @@ function App() {
                   {displayName}: {playerStats.inventory[key]}
                 </span>
                 {shopItem && (
-                  <button onClick={() => sceneRef.current.useItem(key)} style={{ fontSize: '12px' }}>
+                  <button
+                    onClick={(e) => sceneRef.current.useItem(key, e.shiftKey ? 10 : 1)}
+                    style={{ fontSize: '12px' }}
+                    title="Shift+클릭: 10개 사용"
+                  >
                     사용
                   </button>
                 )}
@@ -309,10 +313,11 @@ function App() {
                 {item.name} ({getEffectLabel(item)})
               </span>
               <button
-                onClick={() => sceneRef.current.buyItem(item)}
+                onClick={(e) => sceneRef.current.buyItem(item, e.shiftKey ? 10 : 1)}
                 disabled={playerStats.gold < item.price}
+                title="Shift+클릭: 10개 구매"
               >
-                {item.price}
+                {item.price} G
               </button>
             </div>
           ))}
