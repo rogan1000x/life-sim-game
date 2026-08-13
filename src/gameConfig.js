@@ -26,8 +26,12 @@ export const ENTITY_TYPES = {
   },
   wolf: {
     name: '늑대', category: 'hostile_monster',
-    exp: 40, color: 0x4a0000, radius: 18, sound: 150, hp: 30,
-    damage: 10, speed: 80, sellPrice: 25
+    exp: 40, hp: 30, damage: 10, speed: 80, sellPrice: 25, sound: 150,
+    renderType: 'sprite', // 도형(circle) 대신 실제 이미지 스프라이트로 렌더링
+    spriteIdleKey: 'wolf_idle', spriteIdleFrames: 8,
+    spriteRunKey: 'wolf_run', spriteRunFrames: 3,
+    spriteScale: 2.5, // 원본 32px -> 화면에 80px 정도로 표시 (다른 캐릭터들과 크기감 통일)
+    facingOffsetDeg: 240  // 원본 그림이 대각선 왼쪽 위를 바라보고 있어서, 이동 방향에 맞춰 회전시키기 위한 보정값
   }
 };
 
@@ -53,7 +57,7 @@ export const NPC_DATA = {
       '저기 저 집 보이시죠? 제법 아늑하답니다.'
     ]
   },
-villager3: {
+  villager3: {
     name: '떠돌이 여행자',
     spriteKey: 'npc_villager3',
     hasShop: false, // 상점 없이 대화만 가능

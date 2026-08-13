@@ -63,11 +63,21 @@ export class GameScene extends Phaser.Scene {
     this.load.image('floor_wood', 'assets/tiles/floor_wood.png');
     this.load.image('floor_gray', 'assets/tiles/floor_gray.png');
 
-    // 집 내부 가구 이미지들
+// 집 내부 가구 이미지들
     this.load.image('furn_couch', 'assets/tiles/furn_couch.png');
     this.load.image('furn_dresser1', 'assets/tiles/furn_dresser1.png');
     this.load.image('furn_dresser2', 'assets/tiles/furn_dresser2.png');
     this.load.image('furn_shelf_green', 'assets/tiles/furn_shelf_green.png');
+
+    // 이미지 기반 동물(늑대 등)의 스프라이트시트를 ENTITY_TYPES 데이터만 보고 자동으로 로드
+    // 나중에 토끼 등 새 동물을 추가할 때도 ENTITY_TYPES에 renderType:'sprite' 항목만 추가하면
+    // 이 코드 수정 없이 자동으로 로드됨
+    Object.keys(ENTITY_TYPES).forEach(key => {
+      const info = ENTITY_TYPES[key];
+      if (info.renderType !== 'sprite') return;
+      this.load.spritesheet(info.spriteIdleKey, `assets/animals/${info.spriteIdleKey}.png`, { frameWidth: 32, frameHeight: 32 });
+      this.load.spritesheet(info.spriteRunKey, `assets/animals/${info.spriteRunKey}.png`, { frameWidth: 32, frameHeight: 32 });
+    });
   }
 
   // Scene이 시작될 때 한 번 실행 - 게임 오브젝트들을 배치
@@ -103,7 +113,27 @@ export class GameScene extends Phaser.Scene {
       graphics.moveTo(0, y);
       graphics.lineTo(800, y);
     }
-    graphics.strokePath();
+ graphics.strokePath();
+
+    // 이미지 기반 동물의 대기/뛰기 애니메이션을 ENTITY_TYPES 데이터만 보고 자동 생성
+    // 아래 엔티티 생성 루프보다 반드시 먼저 실행되어야 함 (생성 시점에 바로 애니메이션을 재생하기 때문)
+    Object.keys(ENTITY_TYPES).forEach(key => {
+      const info = ENTITY_TYPES[key];
+      if (info.renderType !== 'sprite') return;
+
+      this.anims.create({
+        key: `${key}-idle`,
+        frames: this.anims.generateFrameNumbers(info.spriteIdleKey, { start: 0, end: info.spriteIdleFrames - 1 }),
+        frameRate: 6,
+        repeat: -1
+      });
+      this.anims.create({
+        key: `${key}-run`,
+        frames: this.anims.generateFrameNumbers(info.spriteRunKey, { start: 0, end: info.spriteRunFrames - 1 }),
+        frameRate: 10,
+        repeat: -1
+      });
+    });
 
     // 자원(나무, 돌), 동물(토끼), 몬스터(늑대)를 하나의 그룹으로 통합 관리
     this.entities = this.add.group();
@@ -261,12 +291,24 @@ export class GameScene extends Phaser.Scene {
           Math.sin(angle) * info.speed * nightMultiplier
         );
 
-        // 밤이 깊을수록(nightIntensity > 0.3) 색을 붉게 바꿔 위험 상태를 시각적으로 알려줌
-        // circle로 만든 도형이라 이미지 전용 기능인 setTint 대신 setFillStyle로 색 자체를 바꿔야 함
-        if (this.nightIntensity > 0.3) {
-          entity.setFillStyle(0xff2222);
+        if (info.renderType === 'sprite') {
+          // 이미지가 고정된 방향(대각선 위쪽)을 보고 그려져 있어서, 이동 방향에 맞게 회전시켜 향하게 함
+          entity.setRotation(angle + Phaser.Math.DegToRad(info.facingOffsetDeg));
+          entity.anims.play(`${entity.entityType}-run`, true); // true: 이미 재생 중이면 처음부터 다시 시작하지 않음
+
+          // 이미지 스프라이트는 setTint로 밤에 붉게 표시 (도형과 달리 setTint 사용 가능)
+          if (this.nightIntensity > 0.3) {
+            entity.setTint(0xff6666);
+          } else {
+            entity.clearTint();
+          }
         } else {
-          entity.setFillStyle(info.color);
+          // 도형(circle) 오브젝트는 setTint를 쓸 수 없어 setFillStyle로 색 자체를 바꿔야 함
+          if (this.nightIntensity > 0.3) {
+            entity.setFillStyle(0xff2222);
+          } else {
+            entity.setFillStyle(info.color);
+          }
         }
       }
     });
@@ -785,14 +827,23 @@ export class GameScene extends Phaser.Scene {
 
   // 자원/동물/몬스터 오브젝트를 생성하는 통합 함수
   // category에 따라 물리 속성(고정/이동/추적)이 자동으로 다르게 설정됨
-  createEntity(x, y, typeKey) {
+ createEntity(x, y, typeKey) {
     const info = ENTITY_TYPES[typeKey];
 
-    const entity = this.add.circle(x, y, info.radius, info.color);
+    // renderType이 'sprite'면 실제 이미지로, 그 외에는 기존처럼 도형(circle)으로 생성
+    const entity = info.renderType === 'sprite'
+      ? this.add.sprite(x, y, info.spriteIdleKey, 0).setScale(info.spriteScale || 1)
+      : this.add.circle(x, y, info.radius, info.color);
+
     entity.entityType = typeKey;
     entity.hp = info.hp;
     entity.maxHp = info.hp;
-    entity.isHarvested = false; // 채집/처치되어 리젠 대기 중인지 여부 (실내/실외와 별개)
+    // 채집/처치되어 리젠 대기 중인지 여부 (실내/실외 여부와는 별개로 관리)
+    entity.isHarvested = false;
+
+    if (info.renderType === 'sprite') {
+      entity.play(`${typeKey}-idle`); // 생성 직후에는 대기 애니메이션으로 시작
+    }
 
     if (info.category === 'resource') {
       // 자원은 움직이지 않는 정적 물리 객체
