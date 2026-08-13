@@ -1,3 +1,18 @@
+// 화폐를 골드/실버/구리로 세분화해서 표시하는 헬퍼 함수
+// 내부적으로는 여전히 하나의 숫자(구리 단위)로만 계산하고, 화면에 보여줄 때만 이 함수로 쪼갬
+// 1골드 = 100실버 = 10000구리
+export function formatCurrency(totalCopper) {
+  const gold = Math.floor(totalCopper / 10000);
+  const silver = Math.floor((totalCopper % 10000) / 100);
+  const copper = totalCopper % 100;
+
+  const parts = [];
+  if (gold > 0) parts.push(`${gold}G`);
+  if (gold > 0 || silver > 0) parts.push(`${silver}S`);
+  parts.push(`${copper}C`); // 구리는 항상 표시 (0이어도 "0C"로 나와서 단위가 뭔지 헷갈리지 않게)
+  return parts.join(' ');
+}
+
 // 게임 전체 설정값 모음 (나중에 옵션 화면에서 조정 가능하게 분리해둠)
 export const GAME_CONFIG = {
   treeCount: 3,
@@ -14,24 +29,24 @@ export const GAME_CONFIG = {
 export const ENTITY_TYPES = {
   tree: {
     name: '나무', category: 'resource',
-    exp: 10, color: 0x2d5016, radius: 20, sound: 400, hp: 1, sellPrice: 5
+    exp: 10, color: 0x2d5016, radius: 20, sound: 400, hp: 1
   },
   stone: {
     name: '돌', category: 'resource',
-    exp: 15, color: 0x808080, radius: 18, sound: 250, hp: 1, sellPrice: 8
+    exp: 15, color: 0x808080, radius: 18, sound: 250, hp: 1
   },
   rabbit: {
     name: '토끼', category: 'passive_animal',
-    exp: 20, color: 0xffa500, radius: 15, sound: 700, hp: 1, sellPrice: 12
+    exp: 20, color: 0xffa500, radius: 15, sound: 700, hp: 1
   },
   wolf: {
     name: '늑대', category: 'hostile_monster',
-    exp: 40, hp: 30, damage: 10, speed: 80, sellPrice: 25, sound: 150,
-    renderType: 'sprite', // 도형(circle) 대신 실제 이미지 스프라이트로 렌더링
+    exp: 40, hp: 30, damage: 10, speed: 80, sound: 150,
+    renderType: 'sprite',
     spriteIdleKey: 'wolf_idle', spriteIdleFrames: 8,
     spriteRunKey: 'wolf_run', spriteRunFrames: 3,
-    spriteScale: 2.5, // 원본 32px -> 화면에 80px 정도로 표시 (다른 캐릭터들과 크기감 통일)
-    facingOffsetDeg: 240  // 원본 그림이 대각선 왼쪽 위를 바라보고 있어서, 이동 방향에 맞춰 회전시키기 위한 보정값
+    spriteScale: 2.5,
+    facingOffsetDeg: 240
   }
 };
 
@@ -72,16 +87,24 @@ export const NPC_DATA = {
 // category: 'consumable'(즉시 사용/소모) 또는 'equipment'(장착/해제, 장착 중일 때만 효과 적용)
 // equipment는 slot(장착 부위)을 가짐 - 지금은 weapon 하나뿐이지만 나중에 방어구 등으로 확장 가능
 // 내구도 시스템은 추후 추가 예정 (지금은 장착/해제 기반까지만 구현)
+// 상점/시장에서 거래 가능한 모든 아이템 목록
+// basePrice는 재고가 기준치(10)일 때의 가격. 실제 거래 가격은 GameScene의
+// getMarketPrice()가 재고량에 따라 매번 다시 계산함 (사면 비싸지고, 팔면 싸짐)
+// category: 'consumable'(사용/소모), 'equipment'(장착/해제), 'resource'/'monster'(채집물, 사용 불가·거래만 가능)
 export const SHOP_ITEMS = [
-  { id: 'potion_small', name: '작은 포션', price: 20, category: 'consumable', effectType: 'heal', effectValue: 30, icon: null },
-  { id: 'potion_large', name: '큰 포션', price: 50, category: 'consumable', effectType: 'heal', effectValue: 100, icon: null },
-  { id: 'item_pickaxe', name: '낡은 곡괭이', price: 30, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
-  { id: 'item_gadget', name: '수상한 부품', price: 25, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
-  { id: 'item_wrench', name: '만능 렌치', price: 50, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
-  { id: 'item_signpost', name: '이정표', price: 40, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
-  { id: 'item_stopsign', name: '경고 표지판', price: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
-  { id: 'item_crosssign', name: '교차로 표지판', price: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
-  { id: 'item_streetlamp', name: '가로등 부품', price: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' }
+  { id: 'potion_small', name: '작은 포션', basePrice: 20, category: 'consumable', effectType: 'heal', effectValue: 30, icon: null },
+  { id: 'potion_large', name: '큰 포션', basePrice: 50, category: 'consumable', effectType: 'heal', effectValue: 100, icon: null },
+  { id: 'item_pickaxe', name: '낡은 곡괭이', basePrice: 30, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
+  { id: 'item_gadget', name: '수상한 부품', basePrice: 25, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
+  { id: 'item_wrench', name: '만능 렌치', basePrice: 50, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
+  { id: 'item_signpost', name: '이정표', basePrice: 40, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
+  { id: 'item_stopsign', name: '경고 표지판', basePrice: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
+  { id: 'item_crosssign', name: '교차로 표지판', basePrice: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
+  { id: 'item_streetlamp', name: '가로등 부품', basePrice: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' },
+  { id: 'tree', name: '나무', basePrice: 5, category: 'resource', icon: null },
+  { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
+  { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
+  { id: 'wolf', name: '늑대 가죽', basePrice: 25, category: 'monster', icon: null }
 ];
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로

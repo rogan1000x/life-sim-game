@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency } from './gameConfig';
+
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
 // React의 useEffect 안에 있던 모든 게임 로직이 이 클래스 하나로 정리됨
@@ -25,6 +26,13 @@ export class GameScene extends Phaser.Scene {
     this.nightIntensity = 0;     // 밤의 깊이 (0=낮, 0.6=한밤중) - 몬스터 강화 배율 계산에 사용
     this.equipped = { weapon: null }; // 슬롯별 장착 중인 아이템 id (지금은 weapon 슬롯만 존재)
     this.isDead = false;         // 사망 후 부활 대기 중인지 여부 (중복 사망 처리 방지용)
+    this.marketStock = {};       // 아이템별 시장 재고 (기준치 10, 사면 감소/팔면 증가하며 가격에 영향을 줌)
+
+    // 아이템별 "가격 변화 기록"을 저장하는 곳이에요.
+    // 예: this.priceHistory['potion_small'] = [20, 22, 22, 18, 15, ...] 이런 식으로
+    // 시간이 지날 때마다 숫자가 하나씩 뒤에 추가되는 배열(리스트)이에요.
+    // 이 배열을 나중에 그래프에 그대로 넘겨주면 꺾은선 그래프가 됨
+    this.priceHistory = {};
     this.isKnockedBack = false;
     this.nearbyNpc = null;
     this.facingDirection = 'down'; // 캐릭터가 마지막으로 바라본 방향 (멈췄을 때도 그 방향을 보여주기 위해 기억)
@@ -63,7 +71,7 @@ export class GameScene extends Phaser.Scene {
     this.load.image('floor_wood', 'assets/tiles/floor_wood.png');
     this.load.image('floor_gray', 'assets/tiles/floor_gray.png');
 
-// 집 내부 가구 이미지들
+    // 집 내부 가구 이미지들
     this.load.image('furn_couch', 'assets/tiles/furn_couch.png');
     this.load.image('furn_dresser1', 'assets/tiles/furn_dresser1.png');
     this.load.image('furn_dresser2', 'assets/tiles/furn_dresser2.png');
@@ -85,6 +93,23 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(-50, -50, 900, 700);
 
     // 저장된 데이터 불러오기
+    // 시장 재고 초기값 설정 - 모든 거래 가능 아이템을 기준 재고(10)로 시작
+    SHOP_ITEMS.forEach(item => {
+      this.marketStock[item.id] = 10;
+      this.priceHistory[item.id] = []; // 가격 기록도 빈 배열로 초기화 (아직 기록된 게 하나도 없는 상태)
+    });
+
+    // Phaser의 this.time.addEvent는 "일정 시간마다 함수를 반복 실행"해주는 타이머예요.
+    // setInterval이랑 비슷한 역할인데, Phaser 안에서는 이걸 쓰는 게 더 안전해요
+    // (씬이 꺼지거나 바뀔 때 Phaser가 알아서 같이 정리해주기 때문)
+    // delay: 2000 은 2000ms = 2초마다 실행한다는 뜻이고, loop: true는 한 번만 하지 않고 계속 반복한다는 뜻이에요
+    this.time.addEvent({
+      delay: 2000,
+      loop: true,
+      callback: () => this.recordPriceHistory()
+    });
+
+    // 저장된 데이터 불러오기
     const savedData = localStorage.getItem('lifeSimSave');
     if (savedData) {
       const data = JSON.parse(savedData);
@@ -100,6 +125,8 @@ export class GameScene extends Phaser.Scene {
       // 예전 저장 파일에는 이 값이 없을 수 있어 undefined 체크 후 있을 때만 덮어씀
       if (data.gameMinutes !== undefined) this.gameMinutes = data.gameMinutes;
       if (data.currentDay !== undefined) this.currentDay = data.currentDay;
+      if (data.equipped !== undefined) this.equipped = data.equipped;
+      if (data.marketStock !== undefined) this.marketStock = { ...this.marketStock, ...data.marketStock };
     }
 
     // 배경 격자무늬
@@ -113,7 +140,7 @@ export class GameScene extends Phaser.Scene {
       graphics.moveTo(0, y);
       graphics.lineTo(800, y);
     }
- graphics.strokePath();
+    graphics.strokePath();
 
     // 이미지 기반 동물의 대기/뛰기 애니메이션을 ENTITY_TYPES 데이터만 보고 자동 생성
     // 아래 엔티티 생성 루프보다 반드시 먼저 실행되어야 함 (생성 시점에 바로 애니메이션을 재생하기 때문)
@@ -334,10 +361,7 @@ export class GameScene extends Phaser.Scene {
           this.addToInventory(entity.entityType);
           this.playSound(info.sound);
           this.gainExp(info.exp);
-
-          this.gold += info.sellPrice;
-          this.syncStatsToReact();
-          this.addLog(`${info.name} 획득 (+${info.sellPrice}G)`, 'gain');
+          this.addLog(`${info.name} 획득 (상인에게 팔 수 있어요)`, 'gain');
 
           this.createParticleBurst(entity.x, entity.y, info.color);
 
@@ -360,10 +384,7 @@ export class GameScene extends Phaser.Scene {
 
             this.addToInventory(entity.entityType);
             this.gainExp(info.exp);
-
-            this.gold += info.sellPrice;
-            this.syncStatsToReact();
-            this.addLog(`${info.name} 처치! (+${info.exp} EXP, +${info.sellPrice}G)`, 'kill');
+            this.addLog(`${info.name} 처치! (+${info.exp} EXP, 상인에게 팔 수 있어요)`, 'kill');
 
             this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
 
@@ -487,7 +508,8 @@ export class GameScene extends Phaser.Scene {
       level: this.level, exp: this.exp, hp: this.hp, maxHp: this.maxHp,
       statPoints: this.statPoints, attackPower: this.attackPower,
       moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory,
-      gameMinutes: this.gameMinutes, currentDay: this.currentDay, equipped: this.equipped
+      gameMinutes: this.gameMinutes, currentDay: this.currentDay, equipped: this.equipped,
+      marketStock: this.marketStock
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -635,7 +657,17 @@ export class GameScene extends Phaser.Scene {
         moveSpeed: this.moveSpeed,
         gold: this.gold,
         inventory: { ...this.inventory },
-        equipped: { ...this.equipped }
+        equipped: { ...this.equipped },
+        marketPrices: SHOP_ITEMS.reduce((acc, item) => {
+          acc[item.id] = this.getMarketPrice(item.id);
+          return acc;
+        }, {}),
+        // priceHistory도 그대로 복사해서 넘겨줌 ({...} 이렇게 배열 안에 있는 걸 얕은 복사하는 것)
+        // React는 "값이 실제로 바뀌었는지"를 새 객체인지 아닌지로 판단하기 때문에,
+        // 원본을 그대로 넘기지 않고 항상 새로 복사해서 넘기는 습관이 중요해요
+        priceHistory: { ...this.priceHistory },
+        // marketStock도 새로 복사해서 넘겨줘야 App.js에서 "상인 재고 N개"를 화면에 보여줄 수 있어요
+        marketStock: { ...this.marketStock }
       });
     }
     this.saveGame();
@@ -739,18 +771,99 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // 상점에서 아이템 구매 - 즉시 사용하지 않고 인벤토리에 저장만 함
-  // quantity를 넘기면 여러 개를 한 번에 구매 (Shift+클릭용). 골드가 부족하면 살 수 있는 만큼만 구매함
-  buyItem(item, quantity = 1) {
-    const affordableQty = Math.min(quantity, Math.floor(this.gold / item.price));
-    if (affordableQty <= 0) return;
+  // 2초마다 호출되는 함수예요. 지금 이 순간의 모든 아이템 가격을 한 번씩 기록에 남겨요.
+  // "기록에 남긴다"는 건, priceHistory 배열 맨 뒤에 지금 가격 숫자를 하나 추가(push)하는 거예요.
+  recordPriceHistory() {
+    const maxHistoryLength = 30; // 최근 30개 기록만 남기고 그 전 건 지워요 (안 그러면 배열이 계속 커져서 느려짐)
 
-    this.gold -= item.price * affordableQty;
-    if (!this.inventory[item.id]) {
-      this.inventory[item.id] = 0;
+    SHOP_ITEMS.forEach(item => {
+      const currentPrice = this.getMarketPrice(item.id);
+
+      // push()는 배열 맨 뒤에 새 값을 추가하는 자바스크립트 기본 함수예요
+      this.priceHistory[item.id].push(currentPrice);
+
+      // 배열 길이가 30개를 넘으면, shift()로 맨 앞(가장 오래된) 기록을 하나 제거해요
+      // 이렇게 하면 항상 "최근 30개"만 유지돼요
+      if (this.priceHistory[item.id].length > maxHistoryLength) {
+        this.priceHistory[item.id].shift();
+      }
+    });
+  }
+
+  // 재고(marketStock)를 기준치(10)와 비교해 현재 시세를 계산
+  // 재고가 적을수록 비싸지고, 많을수록 싸짐. 배율을 0.4~2.5배로 제한해 가격이 너무 극단적으로 치닫지 않게 함
+  getMarketPrice(itemId) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item) return 0;
+
+    const baselineStock = 10;
+    const stock = this.marketStock[itemId] ?? baselineStock;
+
+    // 나눗셈에서 stock이 0이면 "0으로 나누기" 에러가 생기니까,
+    // 계산할 때만 최소 1로 취급해요 (실제 재고 값 자체는 0 그대로 유지됨 - 표시/구매 제한용으로는 진짜 0을 씀)
+    const multiplier = Math.min(2.5, Math.max(0.4, baselineStock / Math.max(stock, 1)));
+
+    return Math.max(1, Math.round(item.basePrice * multiplier));
+  }
+
+  // 아이템 구매 - 낱개마다 가격을 다시 계산해서, 여러 개 살수록 뒤로 갈수록 비싸짐 (재고 감소 반영)
+  // quantity를 넘기면 여러 개를 한 번에 구매 (Shift+클릭용).
+  // 골드가 부족해지거나, 상인의 재고가 0이 되면 그 시점에서 멈추고 그때까지 산 만큼만 인정함
+  buyItem(itemId, quantity = 1) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item) return;
+
+    let boughtCount = 0;
+    let totalSpent = 0;
+
+    // for문을 quantity번 돌면서, 한 번 돌 때마다 "한 개씩" 사는 걸 반복해요.
+    // 이렇게 한 개씩 나눠서 처리하는 이유는, 살 때마다 가격이 조금씩 오르기 때문이에요
+    // (한 번에 10개를 사도 다 같은 가격이 아니라, 1개 값 → 2개째 값 → 3개째 값... 이렇게 달라짐)
+    for (let i = 0; i < quantity; i++) {
+      // ?? 10 은 "만약 marketStock[itemId]가 아직 없다면(undefined) 10을 기본값으로 쓴다"는 뜻이에요
+      const currentStock = this.marketStock[itemId] ?? 10;
+
+      // 상인 재고가 0이면 더 이상 팔 물건이 없다는 뜻이니, 반복을 여기서 멈춰요 (break)
+      if (currentStock <= 0) break;
+
+      const price = this.getMarketPrice(itemId);
+      if (this.gold < price) break; // 골드가 부족해지면 거기서 멈추고, 그때까지 산 만큼만 인정
+
+      this.gold -= price;
+      totalSpent += price;
+      // 이제는 재고가 진짜로 0까지 줄어들 수 있어요 (예전엔 Math.max(1, ...)로 최소 1을 유지했었음)
+      this.marketStock[itemId] = currentStock - 1;
+      boughtCount++;
     }
-    this.inventory[item.id] += affordableQty;
+    if (boughtCount === 0) return;
 
+    if (!this.inventory[itemId]) this.inventory[itemId] = 0;
+    this.inventory[itemId] += boughtCount;
+
+    this.addLog(`${item.name} ${boughtCount}개 구매 (-${formatCurrency(totalSpent)})`, 'info');
+    this.syncStatsToReact();
+  }
+
+  // 아이템 판매 - 낱개마다 가격을 다시 계산해서, 여러 개 팔수록 뒤로 갈수록 싸짐 (재고 증가 반영)
+  // quantity를 넘기면 여러 개를 한 번에 판매 (Shift+클릭용). 보유량보다 많이 요청해도 가진 만큼만 판매함
+  sellItem(itemId, quantity = 1) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item || !this.inventory[itemId]) return;
+
+    const sellCount = Math.min(quantity, this.inventory[itemId]);
+    if (sellCount <= 0) return;
+
+    let totalEarned = 0;
+    for (let i = 0; i < sellCount; i++) {
+      const price = this.getMarketPrice(itemId);
+      totalEarned += price;
+      this.marketStock[itemId] = (this.marketStock[itemId] ?? 10) + 1; // 팔 때마다 재고 증가 -> 다음 가격 하락
+    }
+
+    this.inventory[itemId] -= sellCount;
+    this.gold += totalEarned;
+
+    this.addLog(`${item.name} ${sellCount}개 판매 (+${formatCurrency(totalEarned)})`, 'gain');
     this.syncStatsToReact();
   }
 
@@ -827,7 +940,7 @@ export class GameScene extends Phaser.Scene {
 
   // 자원/동물/몬스터 오브젝트를 생성하는 통합 함수
   // category에 따라 물리 속성(고정/이동/추적)이 자동으로 다르게 설정됨
- createEntity(x, y, typeKey) {
+  createEntity(x, y, typeKey) {
     const info = ENTITY_TYPES[typeKey];
 
     // renderType이 'sprite'면 실제 이미지로, 그 외에는 기존처럼 도형(circle)으로 생성
