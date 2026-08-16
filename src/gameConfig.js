@@ -94,18 +94,58 @@ export const NPC_DATA = {
 export const SHOP_ITEMS = [
   { id: 'potion_small', name: '작은 포션', basePrice: 20, category: 'consumable', effectType: 'heal', effectValue: 30, icon: null },
   { id: 'potion_large', name: '큰 포션', basePrice: 50, category: 'consumable', effectType: 'heal', effectValue: 100, icon: null },
-  { id: 'item_pickaxe', name: '낡은 곡괭이', basePrice: 30, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png' },
-  { id: 'item_gadget', name: '수상한 부품', basePrice: 25, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 5, icon: 'item_gadget.png' },
-  { id: 'item_wrench', name: '만능 렌치', basePrice: 50, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 5, icon: 'item_wrench.png' },
-  { id: 'item_signpost', name: '이정표', basePrice: 40, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png' },
-  { id: 'item_stopsign', name: '경고 표지판', basePrice: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png' },
-  { id: 'item_crosssign', name: '교차로 표지판', basePrice: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png' },
-  { id: 'item_streetlamp', name: '가로등 부품', basePrice: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png' },
+  // maxDurability: 이 장비가 부서지기 전까지 몬스터를 몇 번 때릴 수 있는지를 뜻해요
+  { id: 'item_pickaxe', name: '낡은 곡괭이', basePrice: 30, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 3, icon: 'item_pickaxe.png', maxDurability: 30 },
+  { id: 'item_gadget', name: '수상한 부품', basePrice: 25, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 5, icon: 'item_gadget.png', maxDurability: 25 },
+  { id: 'item_wrench', name: '만능 렌치', basePrice: 50, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 5, icon: 'item_wrench.png', maxDurability: 40 },
+  { id: 'item_signpost', name: '이정표', basePrice: 40, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 20, icon: 'item_signpost.png', maxDurability: 35 },
+  { id: 'item_stopsign', name: '경고 표지판', basePrice: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png', maxDurability: 45 },
+  { id: 'item_crosssign', name: '교차로 표지판', basePrice: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png', maxDurability: 50 },
+  { id: 'item_streetlamp', name: '가로등 부품', basePrice: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png', maxDurability: 60 },
   { id: 'tree', name: '나무', basePrice: 5, category: 'resource', icon: null },
   { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
   { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
-  { id: 'wolf', name: '늑대 가죽', basePrice: 25, category: 'monster', icon: null }
+  { id: 'wolf', name: '늑대 가죽', basePrice: 25, category: 'monster', icon: null },
+
+  // 씨앗 아이템들 - category가 'seed'라서, 상점에서는 다른 아이템처럼 그냥 사고팔 수 있지만
+  // 사용(useItem)이나 장착(equipItem) 대상은 아니고, 오직 "밭에 심기(plantSeed)"에만 쓰임
+  // cropType은 이 씨앗을 심으면 어떤 CROP_TYPES 항목으로 자라는지 연결해주는 값
+  { id: 'wheat_seed', name: '밀 씨앗', basePrice: 15, category: 'seed', cropType: 'wheat', icon: null },
+  { id: 'carrot_seed', name: '당근 씨앗', basePrice: 25, category: 'seed', cropType: 'carrot', icon: null },
+  { id: 'tomato_seed', name: '토마토 씨앗', basePrice: 40, category: 'seed', cropType: 'tomato', icon: null },
+
+  // 수확한 농작물들 - category가 'crop'. 씨앗과 마찬가지로 상점에서 팔 수 있는 대상이지만
+  // 씨앗과는 반대로 "심는" 게 아니라 그냥 상인에게 팔아서 돈을 버는 용도임
+  { id: 'wheat', name: '밀', basePrice: 8, category: 'crop', icon: null },
+  { id: 'carrot', name: '당근', basePrice: 15, category: 'crop', icon: null },
+  { id: 'tomato', name: '토마토', basePrice: 25, category: 'crop', icon: null },
+
+  // 주점 전용 음식 - tavernOnly:true는 일반 상인(villager1) 상점에는 안 뜨고, 주점 메뉴에서만 보이게 하는 표시예요
+  { id: 'food_bread', name: '빵', basePrice: 15, category: 'consumable', effectType: 'heal', effectValue: 25, tavernOnly: true, icon: null },
+  { id: 'food_stew', name: '스튜', basePrice: 35, category: 'consumable', effectType: 'heal', effectValue: 60, tavernOnly: true, icon: null }
 ];
+
+
+
+// 작물 종류 정의 - 씨앗을 심으면 이 데이터를 기준으로 자라남
+// growMinutes: 심은 뒤 다 자라기까지 걸리는 "게임 속" 시간(분). 실제 걸리는 현실 시간이 아니라
+// 게임 안의 시계(하루=1440분) 기준이라, 게임 시간이 빨리 흐르면 그만큼 빨리 자람
+// yieldMin/yieldMax: 수확할 때 몇 개가 나올지 범위 (그 사이 숫자 중 무작위로 하나 정해짐)
+export const CROP_TYPES = {
+  wheat: { name: '밀', growMinutes: 240, yieldMin: 2, yieldMax: 4, color: 0xd4c05a },
+  carrot: { name: '당근', growMinutes: 480, yieldMin: 1, yieldMax: 3, color: 0xff8c3c },
+  tomato: { name: '토마토', growMinutes: 720, yieldMin: 2, yieldMax: 3, color: 0xe0483c }
+};
+
+// 밭 구역 위치 목록 - 각자 다른 가격을 가짐 (비싼 밭이 딱히 더 좋은 건 아니고, 지금은 위치만 다름)
+// 나중에 새 밭을 늘리고 싶으면 이 배열에 항목만 추가하면 됨 (집/NPC와 동일한 패턴)
+export const FARM_PLOTS = [
+  { id: 'farm1', x: 550, y: 580, price: 200 },
+  { id: 'farm2', x: 350, y: 250, price: 350 },
+  { id: 'farm3', x: 750, y: 400, price: 500 }
+];
+
+
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
 // 집마다 다른 조합을 줄 수 있음. 새 집을 늘리려면 여기에 항목만 추가하고
@@ -149,6 +189,18 @@ export const BUILDING_TYPES = {
     floorTile: 'floor_gray',
     furniture: [
       { spriteKey: 'furn_shelf_green', x: 400, y: 200, scale: 4 }
+    ]
+  },
+  tavern: {
+    name: '주점',
+    color: 0x6b3a1a,
+    width: 120,
+    height: 90,
+    floorTile: 'floor_wood',
+    isTavern: true, // 이 값이 있으면 GameScene의 toggleHouse()가 일반 집이 아니라 주점 메뉴를 열어줌
+    furniture: [
+      { spriteKey: 'furn_couch', x: 350, y: 200, scale: 4 },
+      { spriteKey: 'furn_dresser1', x: 450, y: 200, scale: 4 }
     ]
   }
 };

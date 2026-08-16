@@ -15,9 +15,8 @@ function getEffectLabel(item) {
   if (item.effectType === 'attack') return `공격력 +${item.effectValue}`;
   if (item.effectType === 'speed') return `이동속도 +${item.effectValue}`;
   if (item.effectType === 'maxHp') return `최대체력 +${item.effectValue}`;
-  // 나무/돌/토끼/늑대 같은 재료 아이템은 effectType이 없어서 위 조건에 하나도 안 걸려요.
-  // 그런 경우엔 "재료" 문구를 대신 보여줘서, 괄호가 텅 비어보이지 않게 함
-  if (item.category === 'resource' || item.category === 'monster') return '재료 (거래 전용)';
+  if (item.category === 'seed') return '씨앗 (밭에 심기)';
+  if (item.category === 'resource' || item.category === 'monster' || item.category === 'crop') return '재료 (거래 전용)';
   return '';
 }
 
@@ -73,6 +72,10 @@ function App() {
   const [showShop, setShowShop] = useState(false);
   const [logs, setLogs] = useState([]); // 몬스터 처치/아이템 획득/사망 등 이벤트 알림 목록
 
+  // 지금 "씨앗 심기 메뉴"가 열려있다면 어느 밭(farm1, farm2...)에 대한 건지 저장해요.
+  // null이면 "메뉴가 안 열려있음"이라는 뜻이에요.
+  const [farmMenuPlotId, setFarmMenuPlotId] = useState(null);
+
   // 지금 그래프를 펼쳐서 보고 있는 아이템의 id를 저장해요. null이면 "아무 그래프도 안 열려있음"이라는 뜻이에요.
   // 예: 사용자가 "작은 포션" 옆 그래프 버튼을 누르면 이 값이 'potion_small'로 바뀜
   const [graphItemId, setGraphItemId] = useState(null);
@@ -110,6 +113,8 @@ function App() {
     scene.onShopToggle = () => setShowShop(prev => !prev);
     scene.onDialogue = (text) => setDialogue(text); // GameScene에서 대사를 보내주면 대화창 상태에 반영
     scene.onLog = (text, type) => addLog(text, type); // GameScene에서 이벤트가 발생하면 알림창에 기록
+    // GameScene이 "심기 메뉴 열어줘/닫아줘"라고 요청하면(onFarmMenuOpen 호출), 그 값을 그대로 state에 저장함
+    scene.onFarmMenuOpen = (plotId) => setFarmMenuPlotId(plotId);
 
     const config = {
       type: Phaser.AUTO,
@@ -414,6 +419,50 @@ function App() {
           boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
         }}>
           💬 {dialogue}
+        </div>
+      )}
+
+      {/* farmMenuPlotId가 null이 아닐 때만(즉, 밭 하나가 선택되어 있을 때만) 이 메뉴가 화면에 보임 */}
+      {farmMenuPlotId && (
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          ...panelStyle,
+          padding: '25px',
+          zIndex: 3000,
+          minWidth: '260px'
+        }}>
+          <h3 style={{ margin: '0 0 14px', color: THEME.gold }}>🌱 무엇을 심을까요?</h3>
+
+          {/* SHOP_ITEMS 중에서 "씨앗인데(category==='seed') && 내가 실제로 갖고 있는(재고>0)" 것만 골라서 보여줌
+              filter()는 배열에서 조건에 맞는 것들만 뽑아 새 배열로 만들어주는 함수예요 */}
+          {SHOP_ITEMS.filter(i => i.category === 'seed' && (playerStats.inventory[i.id] || 0) > 0).length === 0 ? (
+            <p style={{ color: '#a8927a' }}>보유한 씨앗이 없어요. 상점에서 구매해보세요.</p>
+          ) : (
+            SHOP_ITEMS.filter(i => i.category === 'seed' && (playerStats.inventory[i.id] || 0) > 0).map(seed => (
+              <div key={seed.id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px'
+              }}>
+                <span>{seed.name} (보유 {playerStats.inventory[seed.id]})</span>
+                <button
+                  style={{ ...buttonStyle, fontSize: '12px' }}
+                  // 이 버튼을 누르면 GameScene의 plantSeed 함수를 호출해서 실제로 심기를 실행함
+                  onClick={() => sceneRef.current.plantSeed(farmMenuPlotId, seed.id)}
+                >
+                  심기
+                </button>
+              </div>
+            ))
+          )}
+
+          <button
+            onClick={() => setFarmMenuPlotId(null)} // null로 바꾸면 위 조건(farmMenuPlotId &&)이 거짓이 되어 메뉴가 사라짐
+            style={{ ...buttonStyle, marginTop: '16px', width: '100%' }}
+          >
+            닫기
+          </button>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -25,8 +25,31 @@ export class GameScene extends Phaser.Scene {
     this.currentDay = 1;         // 게임 속 날짜
     this.nightIntensity = 0;     // 밤의 깊이 (0=낮, 0.6=한밤중) - 몬스터 강화 배율 계산에 사용
     this.equipped = { weapon: null }; // 슬롯별 장착 중인 아이템 id (지금은 weapon 슬롯만 존재)
+
+    // 장비별 "지금 남아있는 내구도"를 저장하는 곳이에요.
+    // 예: { item_pickaxe: 12 } 라면, 곡괭이가 지금 12번 더 때리면 부서진다는 뜻이에요.
+    this.equipmentDurability = {};
     this.isDead = false;         // 사망 후 부활 대기 중인지 여부 (중복 사망 처리 방지용)
     this.marketStock = {};       // 아이템별 시장 재고 (기준치 10, 사면 감소/팔면 증가하며 가격에 영향을 줌)
+
+    // 농사 시스템 관련 상태들이에요.
+    // 자바스크립트에서 {}는 "빈 객체"를 뜻해요. 객체는 { 키: 값, 키2: 값2 } 형태로
+    // 이름표(키)를 붙여서 데이터를 저장하는 상자라고 생각하면 돼요.
+
+    // 어떤 밭(farm1, farm2...)을 내가 샀는지 기록하는 곳이에요.
+    // 예: { farm1: true } 라면 farm1은 내가 산 밭이라는 뜻이고,
+    // farm2가 이 객체 안에 아예 없으면 아직 안 산 밭이라는 뜻이에요.
+    this.ownedPlots = {};
+
+    // 각 밭에 지금 뭘 심어놨는지 기록하는 곳이에요.
+    // 예: { farm1: { cropType: 'wheat', plantedAt: 1500 } }
+    // cropType은 "무슨 작물인지", plantedAt은 "게임 속 몇 분째에 심었는지"를 저장해서
+    // 나중에 "지금 게임 시간 - 심은 시간"으로 얼마나 자랐는지 계산할 때 씀
+    this.plantedCrops = {};
+
+    // 밭마다 화면에 그려진 실제 도형(사각형, 원)들을 기억해두는 곳이에요.
+    // 이건 저장 데이터에는 안 들어가고, 오직 "지금 화면에 뭐가 그려져 있는지" 관리용이에요.
+    this.farmPlots = {};
 
     // 아이템별 "가격 변화 기록"을 저장하는 곳이에요.
     // 예: this.priceHistory['potion_small'] = [20, 22, 22, 18, 15, ...] 이런 식으로
@@ -52,6 +75,8 @@ export class GameScene extends Phaser.Scene {
     this.onDialogue = null;    // 대화창 표시 함수
     this.onShopToggle = null;  // 상점 열기/닫기 함수
     this.onLog = null;         // 몬스터 처치/아이템 획득/사망 등 이벤트를 알림창에 전달하는 함수
+    this.onFarmMenuOpen = null; // 빈 밭에서 F키를 눌렀을 때, "씨앗 심기 메뉴"를 열어달라고 React에 요청하는 함수
+    this.onTavernOpen = null;   // 주점에 들어가거나 나올 때, React 쪽 주점 메뉴를 열고/닫아달라고 요청하는 함수
     this.godMode = false;      // Admin 무적 모드 (App.js에서 값 변경)
   }
 
@@ -127,6 +152,10 @@ export class GameScene extends Phaser.Scene {
       if (data.currentDay !== undefined) this.currentDay = data.currentDay;
       if (data.equipped !== undefined) this.equipped = data.equipped;
       if (data.marketStock !== undefined) this.marketStock = { ...this.marketStock, ...data.marketStock };
+      // 예전 저장 파일에는 농사 데이터가 아예 없을 수 있어서, 있을 때만 덮어씀
+      if (data.ownedPlots !== undefined) this.ownedPlots = data.ownedPlots;
+      if (data.plantedCrops !== undefined) this.plantedCrops = data.plantedCrops;
+      if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
     }
 
     // 배경 격자무늬
@@ -199,6 +228,7 @@ export class GameScene extends Phaser.Scene {
     this.spaceKey = this.input.keyboard.addKey('SPACE');
     this.eKey = this.input.keyboard.addKey('E');
     this.hKey = this.input.keyboard.addKey('H'); // 집 입장/퇴장 키
+    this.fKey = this.input.keyboard.addKey('F'); // 밭 구매/심기/수확에 사용하는 키
 
     this.physics.add.collider(this.player, this.entities);
 
@@ -262,10 +292,30 @@ export class GameScene extends Phaser.Scene {
       { x: 50, y: 50, type: 'house4' }
     ];
 
+    // 주점(tavern)도 이 배열에 항목만 추가하면 되고, createHouse()가 집이든 주점이든
+    // 똑같은 방식으로 만들어줘요 (BUILDING_TYPES 데이터를 보고 알아서 다르게 그려짐)
+    housePositions.push({ x: 780, y: 550, type: 'tavern' });
+
     housePositions.forEach(pos => {
       this.houses.add(this.createHouse(pos.x, pos.y, pos.type));
     });
 
+    // FARM_PLOTS 배열(gameConfig.js에 정의됨)에 있는 밭들을 하나씩 화면에 만들어요.
+    // forEach는 배열 안의 항목을 하나씩 꺼내서 그때마다 괄호 안의 코드를 실행해주는 반복문이에요.
+    FARM_PLOTS.forEach(plotConfig => {
+      this.createFarmPlot(plotConfig);
+    });
+
+    // 밭은 시간이 지나면서 계속 자라니까, 5초마다 한 번씩 모든 밭의 그림을
+    // 최신 상태(얼마나 자랐는지)로 다시 그려주는 타이머를 만들어요.
+    // 매 프레임(1초에 60번)마다 다시 그리면 컴퓨터에 부담이 되니, 5초에 한 번이면 충분해요.
+    this.time.addEvent({
+      delay: 5000,
+      loop: true,
+      callback: () => {
+        FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
+      }
+    });
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, {
       fontSize: '20px',
       color: '#ff4444'
@@ -363,6 +413,19 @@ export class GameScene extends Phaser.Scene {
           this.gainExp(info.exp);
           this.addLog(`${info.name} 획득 (상인에게 팔 수 있어요)`, 'gain');
 
+          // 채집할 때 낮은 확률(15%)로 씨앗도 하나 덤으로 얻게 해줘요.
+          // Phaser.Math.Between(1, 100)은 1~100 사이의 정수를 무작위로 하나 뽑아주는 함수예요.
+          // 그 값이 15 이하일 확률은 정확히 15%이기 때문에, 이 if문이 참이 될 확률도 15%가 됨
+          if (Phaser.Math.Between(1, 100) <= 15) {
+            const commonSeeds = ['wheat_seed', 'carrot_seed']; // 흔한 씨앗 중에서만 무작위로 하나 골라줌
+            const randomIndex = Phaser.Math.Between(0, commonSeeds.length - 1);
+            const bonusSeedId = commonSeeds[randomIndex];
+
+            this.addToInventory(bonusSeedId);
+            const seedInfo = SHOP_ITEMS.find(i => i.id === bonusSeedId);
+            this.addLog(`덤으로 ${seedInfo.name}도 얻었어요!`, 'gain');
+          }
+
           this.createParticleBurst(entity.x, entity.y, info.color);
 
           // 일정 시간 후 다시 나타남 (리젠)
@@ -376,6 +439,7 @@ export class GameScene extends Phaser.Scene {
           // 몬스터는 체력을 깎아야 처치됨
           entity.hp -= this.attackPower;
           this.playHitSound();
+          this.reduceWeaponDurability(); // 때릴 때마다 지금 낀 무기의 내구도를 깎음
 
           if (entity.hp <= 0) {
             // 채집 자원과 동일한 방식으로 숨김 상태 관리 (실내 여부와 충돌 방지)
@@ -455,6 +519,21 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.hKey) && (this.nearbyHouse || this.isInsideHouse)) {
       this.toggleHouse();
     }
+
+    // 캐릭터와 가장 가까운 밭을 찾음 (집/NPC 찾을 때랑 똑같은 방식이에요)
+    this.nearbyFarmPlot = null;
+    FARM_PLOTS.forEach(plot => {
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, plot.x, plot.y);
+      if (distance < 80) {
+        this.nearbyFarmPlot = plot;
+      }
+    });
+
+    // F키를 눌렀고, 근처에 밭이 있다면 그 밭과 상호작용함
+    // (구매/심기/수확 중 뭘 할지는 handleFarmInteract 안에서 밭 상태를 보고 알아서 결정함)
+    if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
+      this.handleFarmInteract(this.nearbyFarmPlot.id);
+    }
   }
 
   // ===== 아래는 게임에서 재사용되는 헬퍼 함수들 =====
@@ -509,7 +588,9 @@ export class GameScene extends Phaser.Scene {
       statPoints: this.statPoints, attackPower: this.attackPower,
       moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory,
       gameMinutes: this.gameMinutes, currentDay: this.currentDay, equipped: this.equipped,
-      marketStock: this.marketStock
+marketStock: this.marketStock,
+      ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
+      equipmentDurability: this.equipmentDurability
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -577,6 +658,11 @@ export class GameScene extends Phaser.Scene {
         this.furnitureObjects.push(furniture);
       });
 
+      // 방금 들어온 건물이 주점이라면, React 쪽에 "주점 메뉴 열어줘"라고 알려줌
+      if (info.isTavern && this.onTavernOpen) {
+        this.onTavernOpen(true);
+      }
+
     } else {
       // ===== 실외 복귀 =====
       this.isInsideHouse = false;
@@ -596,6 +682,9 @@ export class GameScene extends Phaser.Scene {
 
       this.player.x = this.currentHouse.x;
       this.player.y = this.currentHouse.y + 80;
+
+      // 어떤 건물에서 나오든 일단 주점 메뉴는 닫아달라고 요청함
+      if (this.onTavernOpen) this.onTavernOpen(false);
     }
   }
   // 캐릭터 이동 처리 (실내/실외 공통으로 재사용)
@@ -665,9 +754,11 @@ export class GameScene extends Phaser.Scene {
         // priceHistory도 그대로 복사해서 넘겨줌 ({...} 이렇게 배열 안에 있는 걸 얕은 복사하는 것)
         // React는 "값이 실제로 바뀌었는지"를 새 객체인지 아닌지로 판단하기 때문에,
         // 원본을 그대로 넘기지 않고 항상 새로 복사해서 넘기는 습관이 중요해요
-        priceHistory: { ...this.priceHistory },
+priceHistory: { ...this.priceHistory },
         // marketStock도 새로 복사해서 넘겨줘야 App.js에서 "상인 재고 N개"를 화면에 보여줄 수 있어요
-        marketStock: { ...this.marketStock }
+        marketStock: { ...this.marketStock },
+        // 내구도도 새로 복사해서 넘겨줘야 App.js에서 "18/30" 같은 표시를 할 수 있어요
+        equipmentDurability: { ...this.equipmentDurability }
       });
     }
     this.saveGame();
@@ -764,10 +855,69 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // Admin 패널의 부활 버튼용 - HP를 최대치로 즉시 회복
+// Admin 패널의 부활 버튼용 - HP를 최대치로 즉시 회복
   revivePlayer() {
     this.hp = this.maxHp;
     this.hpText.setText('HP: ' + this.hp);
+    this.syncStatsToReact();
+  }
+
+  // 무기로 몬스터를 때릴 때마다 호출되는 함수예요. 내구도를 1 깎고, 0이 되면 장비가 부서져요.
+  reduceWeaponDurability() {
+    const itemId = this.equipped.weapon;
+    if (!itemId) return; // 아무것도 안 낀 상태(맨손)면 닳을 게 없으니 그냥 종료
+
+    if (this.equipmentDurability[itemId] === undefined) return;
+
+    this.equipmentDurability[itemId]--; // 내구도를 1 깎음
+
+    if (this.equipmentDurability[itemId] <= 0) {
+      // ===== 장비가 부서지는 순간 =====
+      const item = SHOP_ITEMS.find(i => i.id === itemId);
+
+      this.applyEquipEffect(itemId, -1); // 그동안 받고 있던 효과를 제거
+      this.equipped.weapon = null;        // 무기 슬롯을 다시 빈 상태로 만듦
+      delete this.equipmentDurability[itemId]; // 내구도 기록도 지움
+
+      if (this.inventory[itemId]) {
+        this.inventory[itemId]--;
+        if (this.inventory[itemId] <= 0) delete this.inventory[itemId];
+      }
+
+      this.addLog(`${item.name}이(가) 부서졌어요!`, 'death');
+    }
+
+    this.syncStatsToReact();
+  }
+
+  // 장비를 골드를 내고 수리해요. 수리비는 "많이 닳았을수록 비싸지는" 방식으로 계산해요.
+  repairItem(itemId) {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item || item.category !== 'equipment') return;
+
+    const currentDurability = this.equipmentDurability[itemId];
+    if (currentDurability === undefined || currentDurability >= item.maxDurability) return;
+
+    const missing = item.maxDurability - currentDurability;
+    const cost = Math.max(1, Math.round(item.basePrice * 0.5 * (missing / item.maxDurability)));
+
+    if (this.gold < cost) {
+      this.addLog('골드가 부족해서 수리할 수 없어요', 'death');
+      return;
+    }
+
+    this.gold -= cost;
+    this.equipmentDurability[itemId] = item.maxDurability;
+
+    this.addLog(`${item.name} 수리 완료! (-${formatCurrency(cost)})`, 'gain');
+    this.syncStatsToReact();
+  }
+
+  // 주점에서 "쉬기" 버튼을 눌렀을 때 호출돼요. 무료로 체력을 완전히 회복시켜줘요.
+  restAtTavern() {
+    this.hp = this.maxHp;
+    this.hpText.setText('HP: ' + this.hp);
+    this.addLog('푹 쉬어서 체력을 모두 회복했어요', 'gain');
     this.syncStatsToReact();
   }
 
@@ -897,12 +1047,19 @@ export class GameScene extends Phaser.Scene {
     if (this.equipped[slot]) {
       this.applyEquipEffect(this.equipped[slot], -1); // 기존 장비 효과 제거
     }
-    this.equipped[slot] = itemId;
+this.equipped[slot] = itemId;
     this.applyEquipEffect(itemId, 1); // 새 장비 효과 적용
+
+    // 이 아이템의 내구도 기록이 아직 없다면(=한 번도 착용한 적 없는 새 장비라면), maxDurability로 채워줌
+    // 이미 기록이 있다면(예전에 착용하다 벗어둔 상태) 그 값을 그대로 유지해서 닳아있던 만큼 이어서 닳도록 함
+    if (this.equipmentDurability[itemId] === undefined) {
+      this.equipmentDurability[itemId] = item.maxDurability;
+    }
 
     this.syncStatsToReact();
   }
 
+  
   // 장비 해제 - 해당 슬롯을 비우고 효과를 되돌림
   unequipItem(slot) {
     const itemId = this.equipped[slot];
@@ -1023,6 +1180,174 @@ export class GameScene extends Phaser.Scene {
     if (side === 1) return { x: Phaser.Math.Between(0, 800), y: 630 };
     if (side === 2) return { x: -30, y: Phaser.Math.Between(0, 600) };
     return { x: 830, y: Phaser.Math.Between(0, 600) };
+  }
+
+
+  // 밭 하나를 화면에 그려주는 함수예요. FARM_PLOTS 배열의 항목 하나(plotConfig)를 받아서
+  // 사각형(땅)과, 아직 안 샀다면 가격표까지 만들어줘요.
+  createFarmPlot(plotConfig) {
+    // !!는 값을 진짜 true/false로 바꿔주는 자바스크립트 트릭이에요.
+    // this.ownedPlots[plotConfig.id]가 true면 그대로 true, undefined(없음)면 false가 돼요.
+    const owned = !!this.ownedPlots[plotConfig.id];
+
+    // add.rectangle(x, y, 가로, 세로, 색깔)로 네모난 도형을 만들어요.
+    // 색은 일단 기본값으로 만들고, 실제 정확한 색/보임 여부는 아래 refreshFarmPlotVisual이 정리해줌
+    const plotSprite = this.add.rectangle(plotConfig.x, plotConfig.y, 60, 60, 0x8a9a7a);
+    plotSprite.setStrokeStyle(2, 0x4a3520); // 테두리선 추가 (두께 2, 진한 갈색) - 밭 경계가 잘 보이게
+
+    // 아직 안 산 밭 위에 가격을 보여주는 텍스트도 만들어둠 (구매하면 refreshFarmPlotVisual에서 숨김 처리)
+    const priceLabel = this.add.text(plotConfig.x, plotConfig.y - 40, formatCurrency(plotConfig.price), {
+      fontSize: '11px', color: '#ffd76a', backgroundColor: '#00000088', padding: { x: 4, y: 2 }
+    });
+    priceLabel.setOrigin(0.5); // 텍스트의 기준점을 정중앙으로 맞춰서, 좌표가 딱 중앙에 오도록 함
+
+    // 방금 만든 도형/텍스트들을 this.farmPlots에 저장해둬요.
+    // 나중에 다른 함수에서 "farm1의 사각형 색을 바꿔야지" 할 때 이 저장해둔 걸 다시 꺼내 씀
+    this.farmPlots[plotConfig.id] = {
+      config: plotConfig,
+      plotSprite,
+      priceLabel,
+      cropSprite: null // 아직 심은 작물이 없으니 null(없음)로 시작
+    };
+
+    // 만들자마자 한 번 정확한 상태로 그려줌 (저장 파일 불러와서 이미 구매/재배 중이었을 수도 있으니까)
+    this.refreshFarmPlotVisual(plotConfig.id);
+  }
+
+  // 밭 하나의 "지금 상태"를 보고 화면을 최신으로 다시 그려주는 함수예요.
+  // 구매 여부, 심어진 작물, 자란 정도를 전부 반영해서 사각형 색/작물 그림을 갱신함
+  refreshFarmPlotVisual(plotId) {
+    const farmObj = this.farmPlots[plotId];
+    if (!farmObj) return; // 혹시 아직 안 만들어진 밭이면 아무것도 안 하고 함수 종료
+
+    const owned = !!this.ownedPlots[plotId];
+    const crop = this.plantedCrops[plotId];
+
+    // 안 산 밭은 풀빛 회색, 산 밭(경작지)은 갈색으로 표시
+    farmObj.plotSprite.setFillStyle(owned ? 0x6b4a2f : 0x8a9a7a);
+
+    // 가격표는 "안 산 밭일 때만" 보이게 함 (setVisible(true/false)로 화면 표시 여부를 조절)
+    farmObj.priceLabel.setVisible(!owned);
+
+    // 이전에 작물 그림(원)이 그려져 있었다면 일단 지워요.
+    // destroy()는 "이 오브젝트를 화면에서 완전히 없앤다"는 뜻이에요 (메모리에서도 정리됨)
+    if (farmObj.cropSprite) {
+      farmObj.cropSprite.destroy();
+      farmObj.cropSprite = null;
+    }
+
+    // 심어진 작물이 없으면 여기서 끝 (빈 밭이니 원을 새로 그릴 필요 없음)
+    if (!crop) return;
+
+    const cropInfo = CROP_TYPES[crop.cropType];
+    const progress = this.getCropProgress(plotId); // 0(막 심음) ~ 1(다 자람) 사이의 숫자
+
+    // 자랄수록 원이 점점 커지게: 최소 반지름 8, 다 자라면 최대 22
+    const radius = 8 + progress * 14;
+
+    // 다 자랐으면(progress가 1 이상) 눈에 띄는 밝은 노란색으로, 아직 자라는 중이면 작물 고유 색으로 표시
+    const color = progress >= 1 ? 0xffe066 : cropInfo.color;
+
+    farmObj.cropSprite = this.add.circle(plotId ? farmObj.config.x : 0, farmObj.config.y, radius, color);
+  }
+
+  // 지금 이 밭에 심어진 작물이 얼마나 자랐는지 0~1 사이의 숫자로 계산해줘요.
+  // 0 = 방금 심음, 1 = 다 자람(수확 가능), 0.5 = 절반쯤 자람 이런 식이에요.
+  getCropProgress(plotId) {
+    const crop = this.plantedCrops[plotId];
+    if (!crop) return 0; // 아무것도 안 심어져 있으면 자랄 것도 없으니 0
+
+    const cropInfo = CROP_TYPES[crop.cropType];
+
+    // "지금이 게임 속으로 총 몇 분째인지"를 계산해요.
+    // 예: 3일째 오전 2시(120분)라면 = 2일 x 1440분 + 120분 = 2일치를 다 지나온 뒤의 120분
+    // (currentDay가 1부터 시작하니 -1을 빼서 "지나간 날 수"만 계산함)
+    const nowTotalMinutes = (this.currentDay - 1) * 1440 + this.gameMinutes;
+
+    const elapsedMinutes = nowTotalMinutes - crop.plantedAt; // 심은 뒤로 몇 분이 지났는지
+
+    // Math.min(1, ...)은 "계산값이 1보다 커도 최대 1로 묶어준다"는 뜻이에요.
+    // 안 그러면 다 자란 뒤에도 숫자가 계속 커져서(1.5, 2.0...) 나중에 계산이 이상해질 수 있어요.
+    return Math.min(1, elapsedMinutes / cropInfo.growMinutes);
+  }
+
+  // F키를 눌렀을 때 실제로 무슨 일이 일어날지 결정하는 함수예요.
+  // 밭 상태(안 삼/빈 밭/자라는 중/다 자람)에 따라 하는 일이 완전히 달라져요.
+  handleFarmInteract(plotId) {
+    const plotConfig = FARM_PLOTS.find(p => p.id === plotId);
+    const owned = !!this.ownedPlots[plotId];
+
+    // ① 아직 안 산 밭이라면 -> 구매를 시도함
+    if (!owned) {
+      if (this.gold < plotConfig.price) {
+        this.addLog('골드가 부족해서 밭을 살 수 없어요', 'death');
+        return; // return을 만나면 함수가 바로 끝나요 (아래 코드는 실행 안 됨)
+      }
+
+      this.gold -= plotConfig.price;
+      this.ownedPlots[plotId] = true; // 이제 이 밭은 "내 것"이라고 기록
+      this.addLog(`밭을 구매했어요! (-${formatCurrency(plotConfig.price)})`, 'gain');
+      this.refreshFarmPlotVisual(plotId); // 색이 바로 바뀌도록 화면 갱신
+      this.syncStatsToReact();
+      return;
+    }
+
+    // ② 내 밭인데 아무것도 안 심어져 있다면 -> 심기 메뉴를 열어달라고 React 쪽에 알림
+    const crop = this.plantedCrops[plotId];
+    if (!crop) {
+      if (this.onFarmMenuOpen) this.onFarmMenuOpen(plotId);
+      return;
+    }
+
+    // ③ 내 밭에 뭔가 심어져 있다면 -> 다 자랐는지 확인
+    const progress = this.getCropProgress(plotId);
+
+    if (progress >= 1) {
+      // 다 자랐으면 수확!
+      const cropInfo = CROP_TYPES[crop.cropType];
+      const yieldAmount = Phaser.Math.Between(cropInfo.yieldMin, cropInfo.yieldMax); // 몇 개 나올지 무작위로 결정
+
+      if (!this.inventory[crop.cropType]) this.inventory[crop.cropType] = 0;
+      this.inventory[crop.cropType] += yieldAmount;
+
+      // delete는 객체 안의 특정 키(항목)를 통째로 지워버리는 자바스크립트 문법이에요.
+      // 이렇게 하면 this.plantedCrops[plotId]가 다시 undefined(없음) 상태가 되어서
+      // 다음에 이 밭을 확인할 때 "빈 밭"으로 인식하게 돼요.
+      delete this.plantedCrops[plotId];
+
+      this.addLog(`${cropInfo.name} ${yieldAmount}개 수확했어요!`, 'gain');
+      this.refreshFarmPlotVisual(plotId);
+      this.syncStatsToReact();
+    } else {
+      // 아직 덜 자랐으면 지금 몇 퍼센트인지만 알림으로 알려줌
+      const percent = Math.floor(progress * 100);
+      this.addLog(`아직 자라는 중이에요 (${percent}%)`, 'info');
+    }
+  }
+
+  // React 쪽(App.js)의 심기 메뉴에서 씨앗을 선택했을 때 호출되는 함수예요.
+  plantSeed(plotId, seedItemId) {
+    // 이 씨앗을 실제로 갖고 있는지 확인 (없으면 아무것도 안 하고 종료)
+    if (!this.inventory[seedItemId] || this.inventory[seedItemId] <= 0) return;
+
+    const seedItem = SHOP_ITEMS.find(i => i.id === seedItemId);
+    if (!seedItem || seedItem.category !== 'seed') return; // 씨앗이 아닌 걸 심으려고 하면 무시
+
+    this.inventory[seedItemId]--; // 씨앗을 하나 소모함
+
+    // 이 밭에 "지금 심었다"는 기록을 남김
+    // plantedAt에는 "지금이 게임 속으로 총 몇 분째인지"를 저장해서, 나중에 얼마나 자랐는지 계산할 때 씀
+    this.plantedCrops[plotId] = {
+      cropType: seedItem.cropType,
+      plantedAt: (this.currentDay - 1) * 1440 + this.gameMinutes
+    };
+
+    if (this.onFarmMenuOpen) this.onFarmMenuOpen(null); // React 쪽 심기 메뉴를 닫아달라고 알림 (null = "닫아줘")
+
+    const cropInfo = CROP_TYPES[seedItem.cropType];
+    this.addLog(`${cropInfo.name} 씨앗을 심었어요`, 'gain');
+    this.refreshFarmPlotVisual(plotId);
+    this.syncStatsToReact();
   }
 
   // NPC 오브젝트를 생성하는 통합 함수 - NPC_DATA에 항목만 추가하면 몇 명이든 생성 가능
