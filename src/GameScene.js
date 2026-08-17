@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -29,6 +29,11 @@ export class GameScene extends Phaser.Scene {
     // 장비별 "지금 남아있는 내구도"를 저장하는 곳이에요.
     // 예: { item_pickaxe: 12 } 라면, 곡괭이가 지금 12번 더 때리면 부서진다는 뜻이에요.
     this.equipmentDurability = {};
+
+    // 지금 수락해서 진행 중인 퀘스트들의 id 목록이에요.
+    // 배열(리스트)이라서 여러 퀘스트를 동시에 진행할 수 있어요.
+    // 예: ['quest_wood', 'quest_wolf'] 라면 두 퀘스트를 동시에 수락한 상태라는 뜻이에요.
+    this.activeQuestIds = [];
     this.isDead = false;         // 사망 후 부활 대기 중인지 여부 (중복 사망 처리 방지용)
     this.marketStock = {};       // 아이템별 시장 재고 (기준치 10, 사면 감소/팔면 증가하며 가격에 영향을 줌)
 
@@ -69,6 +74,11 @@ export class GameScene extends Phaser.Scene {
     this.currentHouse = null;     // 현재 들어와있는 집 (나갈 때 위치 복원용)
     this.furnitureObjects = [];   // 실내에 생성된 가구 오브젝트들 (전환마다 재사용)
     this.floorTileSprite = null;  // 실내 바닥 타일 오브젝트 (집마다 다른 바닥으로 교체됨)
+
+    // 주점 안에 있는 길드 담당자 NPC를 가리키는 변수예요. 평소엔 null(없음)이고,
+    // 주점에 들어갈 때만 실제 오브젝트가 채워져요. 이걸 따로 저장해두는 이유는
+    // update()에서 "지금 이 NPC랑 얼마나 가까운지" 매 프레임 거리 계산을 해야 하기 때문이에요.
+    this.receptionistNpc = null;
 
     // React와 연결하기 위한 콜백 함수들 (App.js에서 설정해줌)
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
@@ -156,6 +166,7 @@ export class GameScene extends Phaser.Scene {
       if (data.ownedPlots !== undefined) this.ownedPlots = data.ownedPlots;
       if (data.plantedCrops !== undefined) this.plantedCrops = data.plantedCrops;
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
+      if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
     }
 
     // 배경 격자무늬
@@ -296,6 +307,10 @@ export class GameScene extends Phaser.Scene {
     // 똑같은 방식으로 만들어줘요 (BUILDING_TYPES 데이터를 보고 알아서 다르게 그려짐)
     housePositions.push({ x: 780, y: 550, type: 'tavern' });
 
+    // 주점(tavern)도 이 배열에 항목만 추가하면 되고, createHouse()가 집이든 주점이든
+    // 똑같은 방식으로 만들어줘요 (BUILDING_TYPES 데이터를 보고 알아서 다르게 그려짐)
+    housePositions.push({ x: 780, y: 550, type: 'tavern' });
+
     housePositions.forEach(pos => {
       this.houses.add(this.createHouse(pos.x, pos.y, pos.type));
     });
@@ -320,6 +335,20 @@ export class GameScene extends Phaser.Scene {
       fontSize: '20px',
       color: '#ff4444'
     });
+
+    // 지금 어느 건물에 들어와 있는지 화면 위에 보여주는 텍스트예요. 평소엔 빈 텍스트라 안 보이고,
+    // 건물에 들어갈 때만 그 건물 이름으로 채워지고 setVisible(true)로 보이게 함
+    this.buildingNameText = this.add.text(400, 20, '', {
+      fontSize: '22px',
+      color: '#ffd76a',
+      backgroundColor: '#00000099',
+      padding: { x: 12, y: 6 }
+    });
+    this.buildingNameText.setOrigin(0.5, 0); // 가로 중앙 정렬 (텍스트 자체 너비의 절반만큼 왼쪽으로 당김)
+    this.buildingNameText.setScrollFactor(0);
+    this.buildingNameText.setDepth(1000);
+    this.buildingNameText.setVisible(false); // 처음엔 안 보이게 시작
+
 
     // 날짜/시간 표시 - 화면에 고정되어 카메라를 따라다니지 않도록 setScrollFactor(0) 적용
     this.timeText = this.add.text(600, 20, '', {
@@ -347,10 +376,11 @@ export class GameScene extends Phaser.Scene {
 
     this.updateGameClock(delta); // 실내/실외 상관없이 시간은 항상 흐르게 함
 
-    // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
+   // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
     if (this.isInsideHouse) {
       this.handleMovement(); // 실내에서도 이동은 가능해야 하니 별도 처리
       this.checkHouseExit();  // H키로 나가는 것만 체크
+      this.handleReceptionistInteract(); // 길드 담당자와의 대화만 별도로 체크
       return;
     }
 
@@ -588,9 +618,10 @@ export class GameScene extends Phaser.Scene {
       statPoints: this.statPoints, attackPower: this.attackPower,
       moveSpeed: this.moveSpeed, gold: this.gold, inventory: this.inventory,
       gameMinutes: this.gameMinutes, currentDay: this.currentDay, equipped: this.equipped,
-marketStock: this.marketStock,
+      marketStock: this.marketStock,
       ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
-      equipmentDurability: this.equipmentDurability
+      equipmentDurability: this.equipmentDurability,
+      activeQuestIds: this.activeQuestIds
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -633,7 +664,14 @@ marketStock: this.marketStock,
       this.currentHouse = this.nearbyHouse;
       const info = BUILDING_TYPES[this.currentHouse.buildingType];
 
-      this.isInsideHouse = true;
+this.isInsideHouse = true;
+      // isInsideHouse를 true로 바꾼 "직후"에 호출해야, refreshFarmPlotVisual이
+      // 실내 상태를 정확히 보고 즉시 숨겨줘요 (5초 타이머를 기다릴 필요 없이 바로 반영됨)
+      FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
+
+      // 화면 위에 지금 들어온 건물의 이름을 표시함 (예: "주점", "내 집")
+      this.buildingNameText.setText(info.name);
+      this.buildingNameText.setVisible(true);
 
       // 실외 오브젝트들을 각각 순회하며 확실히 숨기고 충돌도 비활성화
       this.setOutdoorObjectsActive(false);
@@ -650,7 +688,7 @@ marketStock: this.marketStock,
       this.furnitureObjects.forEach(f => f.destroy());
       this.furnitureObjects = [];
 
-      info.furniture.forEach(item => {
+info.furniture.forEach(item => {
         const furniture = this.add.sprite(item.x, item.y, item.spriteKey);
         furniture.setScale(item.scale || 4);
         this.physics.add.existing(furniture, true);
@@ -658,15 +696,49 @@ marketStock: this.marketStock,
         this.furnitureObjects.push(furniture);
       });
 
+      // 방금 들어온 건물이 주점이라면, 카운터와 길드 담당자 NPC를 추가로 만들어줌
+      if (info.isTavern) {
+        // 카운터 - 새 이미지 없이 사각형(rectangle)으로 만들어요. 밭을 만들 때랑 같은 방식이에요.
+        const counter = this.add.rectangle(600, 150, 140, 30, 0x5a3a2a);
+        counter.setStrokeStyle(2, 0x3a2416); // 테두리선 추가
+        this.physics.add.existing(counter, true); // 정적 물리 바디 (플레이어가 통과 못 하게)
+        this.physics.add.collider(this.player, counter);
+        this.furnitureObjects.push(counter); // furnitureObjects에 넣어두면 나갈 때 자동으로 같이 정리됨
+
+// 길드 담당자(리나) - NPC_DATA['rina'].spriteKey를 참조해서 만들어요.
+        // 이렇게 하드코딩 대신 데이터를 참조하면, 나중에 gameConfig.js에서 spriteKey만
+        // 바꿔도(전용 그림을 구했을 때) 이 코드는 손댈 필요가 없어져요.
+        // 프레임 번호 1은 "아래를 보는" 방향이에요 (앞서 만든 directionFrames와 같은 규칙)
+        const receptionistInfo = NPC_DATA['rina'];
+        const receptionist = this.add.sprite(600, 110, receptionistInfo.spriteKey, 1);
+        receptionist.setScale(5); // 다른 NPC들과 동일한 배율
+        receptionist.npcType = 'rina';
+        this.physics.add.existing(receptionist, true);
+        this.physics.add.collider(this.player, receptionist);
+        this.furnitureObjects.push(receptionist);
+
+        this.receptionistNpc = receptionist; // update()에서 거리 계산할 때 쓰려고 따로 저장해둠
+      }
+
       // 방금 들어온 건물이 주점이라면, React 쪽에 "주점 메뉴 열어줘"라고 알려줌
       if (info.isTavern && this.onTavernOpen) {
         this.onTavernOpen(true);
       }
 
     } else {
-      // ===== 실외 복귀 =====
+// ===== 실외 복귀 =====
       this.isInsideHouse = false;
+      // 여기서도 마찬가지로 isInsideHouse를 false로 바꾼 직후에 호출해서 바로 다시 보이게 함
+      FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
       this.cameras.main.setBackgroundColor('#4a7c3c');
+
+     // 건물에서 나왔으니 이름 표시도 숨김
+      this.buildingNameText.setVisible(false);
+
+      // 길드 담당자는 이미 위에서 furnitureObjects.forEach(f => f.destroy())로 화면에서는
+      // 지워졌지만, this.receptionistNpc 변수 자체는 여전히 "죽은 오브젝트"를 가리키고 있어서
+      // null로 비워줘야 update()에서 실수로 그 오브젝트를 계속 참조하는 걸 막을 수 있어요.
+      this.receptionistNpc = null;
 
       // 실내 바닥 타일 제거 (다음에 다른 집에 들어갔을 때 이전 바닥이 남지 않도록)
       if (this.floorTileSprite) {
@@ -684,9 +756,11 @@ marketStock: this.marketStock,
       this.player.y = this.currentHouse.y + 80;
 
       // 어떤 건물에서 나오든 일단 주점 메뉴는 닫아달라고 요청함
+      // (주점이 아니었어도 이미 닫혀있는 상태라 별문제 없음 - 그냥 안전하게 항상 호출)
       if (this.onTavernOpen) this.onTavernOpen(false);
     }
   }
+
   // 캐릭터 이동 처리 (실내/실외 공통으로 재사용)
   handleMovement() {
     let velocityX = 0;
@@ -720,10 +794,43 @@ marketStock: this.marketStock,
     }
   }
 
-  // 실내에 있을 때 H키로 나가기만 체크 (다른 실외 로직은 실행 안 함)
+// 실내에 있을 때 H키로 나가기만 체크 (다른 실외 로직은 실행 안 함)
   checkHouseExit() {
     if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
       this.toggleHouse();
+    }
+  }
+
+  // 실내에 있을 때, 근처에 길드 담당자가 있으면 E키로 대사를 볼 수 있게 해줘요.
+  // 실외 NPC들의 대화 로직(update() 안에 있던 것)이랑 거의 똑같은 방식인데,
+  // this.npcs 그룹 대신 this.receptionistNpc 하나만 확인한다는 점만 달라요.
+  handleReceptionistInteract() {
+    if (!this.receptionistNpc) return; // 지금 주점 안이 아니면(길드 담당자가 없으면) 할 게 없음
+
+    const distance = Phaser.Math.Distance.Between(
+      this.player.x, this.player.y, this.receptionistNpc.x, this.receptionistNpc.y
+    );
+    if (distance >= 100) return; // 너무 멀면 상호작용 안 함
+
+if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      const npcType = 'rina';
+      const info = NPC_DATA[npcType];
+
+      // 이전과 다른 NPC와 대화를 시작했다면 대사를 처음부터 다시 보여줌 (실외 NPC와 동일한 규칙)
+      if (this.lastDialogueNpc !== npcType) {
+        this.dialogueIndex = 0;
+        this.lastDialogueNpc = npcType;
+      }
+
+      if (this.onDialogue) {
+        this.onDialogue(info.dialogues[this.dialogueIndex]);
+
+        if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
+        this.dialogueTimer = setTimeout(() => {
+          if (this.onDialogue) this.onDialogue(null);
+        }, 3000);
+      }
+      this.dialogueIndex = (this.dialogueIndex + 1) % info.dialogues.length;
     }
   }
 
@@ -754,11 +861,13 @@ marketStock: this.marketStock,
         // priceHistory도 그대로 복사해서 넘겨줌 ({...} 이렇게 배열 안에 있는 걸 얕은 복사하는 것)
         // React는 "값이 실제로 바뀌었는지"를 새 객체인지 아닌지로 판단하기 때문에,
         // 원본을 그대로 넘기지 않고 항상 새로 복사해서 넘기는 습관이 중요해요
-priceHistory: { ...this.priceHistory },
+        priceHistory: { ...this.priceHistory },
         // marketStock도 새로 복사해서 넘겨줘야 App.js에서 "상인 재고 N개"를 화면에 보여줄 수 있어요
         marketStock: { ...this.marketStock },
         // 내구도도 새로 복사해서 넘겨줘야 App.js에서 "18/30" 같은 표시를 할 수 있어요
-        equipmentDurability: { ...this.equipmentDurability }
+        equipmentDurability: { ...this.equipmentDurability },
+        // [...배열] 은 배열을 새로 복사하는 문법이에요 ({...객체}랑 비슷한 원리예요)
+        activeQuestIds: [...this.activeQuestIds]
       });
     }
     this.saveGame();
@@ -855,7 +964,7 @@ priceHistory: { ...this.priceHistory },
     });
   }
 
-// Admin 패널의 부활 버튼용 - HP를 최대치로 즉시 회복
+  // Admin 패널의 부활 버튼용 - HP를 최대치로 즉시 회복
   revivePlayer() {
     this.hp = this.maxHp;
     this.hpText.setText('HP: ' + this.hp);
@@ -891,14 +1000,19 @@ priceHistory: { ...this.priceHistory },
   }
 
   // 장비를 골드를 내고 수리해요. 수리비는 "많이 닳았을수록 비싸지는" 방식으로 계산해요.
+  // 공식: 원가의 절반 x (닳은 비율). 예를 들어 원가 30G짜리 장비가 절반쯤 닳았으면 대략 7~8G 정도 나와요
+  // (새로 사는 것보다 항상 싸게 만들어서, 수리하는 게 이득이 되도록 설계함)
   repairItem(itemId) {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item || item.category !== 'equipment') return;
 
     const currentDurability = this.equipmentDurability[itemId];
+
+    // undefined면 "한 번도 착용한 적 없는 새 장비"라는 뜻이라 수리할 게 없음
+    // maxDurability와 같거나 크면 이미 최대치라 수리할 필요가 없음
     if (currentDurability === undefined || currentDurability >= item.maxDurability) return;
 
-    const missing = item.maxDurability - currentDurability;
+    const missing = item.maxDurability - currentDurability; // 얼마나 닳았는지
     const cost = Math.max(1, Math.round(item.basePrice * 0.5 * (missing / item.maxDurability)));
 
     if (this.gold < cost) {
@@ -907,18 +1021,59 @@ priceHistory: { ...this.priceHistory },
     }
 
     this.gold -= cost;
-    this.equipmentDurability[itemId] = item.maxDurability;
+    this.equipmentDurability[itemId] = item.maxDurability; // 내구도를 최대치로 완전히 채움
 
     this.addLog(`${item.name} 수리 완료! (-${formatCurrency(cost)})`, 'gain');
     this.syncStatsToReact();
   }
 
-  // 주점에서 "쉬기" 버튼을 눌렀을 때 호출돼요. 무료로 체력을 완전히 회복시켜줘요.
+  // 주점에서 "쉬기" 버튼을 눌렀을 때 호출돼요. 지금은 무료로 체력을 완전히 회복시켜줘요.
+  // (나중에 동료/등급 시스템이 생기면, 여기에 "숙박비" 같은 걸 추가할 수도 있어요)
   restAtTavern() {
     this.hp = this.maxHp;
     this.hpText.setText('HP: ' + this.hp);
     this.addLog('푹 쉬어서 체력을 모두 회복했어요', 'gain');
     this.syncStatsToReact();
+  }
+
+  // 퀘스트를 수락해요. includes()는 "배열 안에 이 값이 있는지" 확인해주는 함수예요.
+  acceptQuest(questId) {
+    if (this.activeQuestIds.includes(questId)) return; // 이미 수락한 퀘스트면 중복 수락 안 되게 막음
+
+    const quest = QUEST_TEMPLATES.find(q => q.id === questId);
+    if (!quest) return;
+
+    this.activeQuestIds.push(questId); // 배열 맨 뒤에 이 퀘스트 id를 추가함
+    this.addLog(`퀘스트 수락: ${quest.name}`, 'info');
+    this.syncStatsToReact();
+  }
+
+  // 퀘스트를 제출해요. 조건(targetCount개 보유)을 만족해야만 성공하고,
+  // 성공하면 그 아이템들을 인벤토리에서 소모하고 골드+경험치 보상을 줘요.
+  turnInQuest(questId) {
+    if (!this.activeQuestIds.includes(questId)) return; // 수락도 안 한 퀘스트는 제출할 수 없음
+
+    const quest = QUEST_TEMPLATES.find(q => q.id === questId);
+    if (!quest) return;
+
+    const haveCount = this.inventory[quest.targetId] || 0;
+    if (haveCount < quest.targetCount) {
+      this.addLog('아직 조건을 다 채우지 못했어요', 'info');
+      return;
+    }
+
+    // 필요한 개수만큼 인벤토리에서 빼줘요
+    this.inventory[quest.targetId] -= quest.targetCount;
+    if (this.inventory[quest.targetId] <= 0) delete this.inventory[quest.targetId];
+
+    this.gold += quest.rewardGold;
+
+    // filter()는 배열에서 조건에 맞는 것만 남기고 새 배열을 만들어주는 함수예요.
+    // "이 퀘스트 id와 다른 것들만 남겨라"라고 하면, 결과적으로 이 퀘스트만 배열에서 빠지게 돼요.
+    this.activeQuestIds = this.activeQuestIds.filter(id => id !== questId);
+
+    this.addLog(`퀘스트 완료: ${quest.name} (+${formatCurrency(quest.rewardGold)})`, 'gain');
+    this.gainExp(quest.rewardExp); // gainExp 안에서 syncStatsToReact도 같이 호출되니 따로 또 부를 필요 없음
   }
 
   // 2초마다 호출되는 함수예요. 지금 이 순간의 모든 아이템 가격을 한 번씩 기록에 남겨요.
@@ -1047,7 +1202,7 @@ priceHistory: { ...this.priceHistory },
     if (this.equipped[slot]) {
       this.applyEquipEffect(this.equipped[slot], -1); // 기존 장비 효과 제거
     }
-this.equipped[slot] = itemId;
+    this.equipped[slot] = itemId;
     this.applyEquipEffect(itemId, 1); // 새 장비 효과 적용
 
     // 이 아이템의 내구도 기록이 아직 없다면(=한 번도 착용한 적 없는 새 장비라면), maxDurability로 채워줌
@@ -1059,7 +1214,7 @@ this.equipped[slot] = itemId;
     this.syncStatsToReact();
   }
 
-  
+
   // 장비 해제 - 해당 슬롯을 비우고 효과를 되돌림
   unequipItem(slot) {
     const itemId = this.equipped[slot];
@@ -1186,10 +1341,6 @@ this.equipped[slot] = itemId;
   // 밭 하나를 화면에 그려주는 함수예요. FARM_PLOTS 배열의 항목 하나(plotConfig)를 받아서
   // 사각형(땅)과, 아직 안 샀다면 가격표까지 만들어줘요.
   createFarmPlot(plotConfig) {
-    // !!는 값을 진짜 true/false로 바꿔주는 자바스크립트 트릭이에요.
-    // this.ownedPlots[plotConfig.id]가 true면 그대로 true, undefined(없음)면 false가 돼요.
-    const owned = !!this.ownedPlots[plotConfig.id];
-
     // add.rectangle(x, y, 가로, 세로, 색깔)로 네모난 도형을 만들어요.
     // 색은 일단 기본값으로 만들고, 실제 정확한 색/보임 여부는 아래 refreshFarmPlotVisual이 정리해줌
     const plotSprite = this.add.rectangle(plotConfig.x, plotConfig.y, 60, 60, 0x8a9a7a);
@@ -1214,11 +1365,26 @@ this.equipped[slot] = itemId;
     this.refreshFarmPlotVisual(plotConfig.id);
   }
 
+  
   // 밭 하나의 "지금 상태"를 보고 화면을 최신으로 다시 그려주는 함수예요.
-  // 구매 여부, 심어진 작물, 자란 정도를 전부 반영해서 사각형 색/작물 그림을 갱신함
+  // 구매 여부, 심어진 작물, 자란 정도, 그리고 "지금 실내인지"까지 전부 이 함수 하나가 판단해요.
+  // 이렇게 판단 기준을 한 곳에 모아두면, 나중에 이 함수를 어디서 호출하든
+  // (타이머든, 집 출입이든) 매번 따로 "실내면 숨겨야지"를 신경 쓸 필요가 없어져요.
   refreshFarmPlotVisual(plotId) {
     const farmObj = this.farmPlots[plotId];
     if (!farmObj) return; // 혹시 아직 안 만들어진 밭이면 아무것도 안 하고 함수 종료
+
+    // 실내에 있을 때는 밭 관련 그림을 전부 숨기고 여기서 함수를 끝내요.
+    // (entities에서 쓰는 refreshEntityVisual과 똑같은 패턴이에요)
+    if (this.isInsideHouse) {
+      farmObj.plotSprite.setVisible(false);
+      farmObj.priceLabel.setVisible(false);
+      if (farmObj.cropSprite) farmObj.cropSprite.setVisible(false);
+      return;
+    }
+
+    // 실외라면 일단 밭 사각형은 보이게 켜둠 (아래에서 세부 상태를 계속 정리함)
+    farmObj.plotSprite.setVisible(true);
 
     const owned = !!this.ownedPlots[plotId];
     const crop = this.plantedCrops[plotId];

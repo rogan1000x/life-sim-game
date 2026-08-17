@@ -72,13 +72,29 @@ export const NPC_DATA = {
       '저기 저 집 보이시죠? 제법 아늑하답니다.'
     ]
   },
-  villager3: {
+ villager3: {
     name: '떠돌이 여행자',
     spriteKey: 'npc_villager3',
     hasShop: false, // 상점 없이 대화만 가능
     dialogues: [
       '이곳저곳 돌아다니는 걸 좋아해요.',
       '토끼는 순하지만 늑대는 정말 조심해야 해요.'
+    ]
+  },
+  // 주점 안에서만 등장하는 길드 담당자예요. 실외 NPC들과 달리 npcPositions 배열에는
+  // 안 들어가고, GameScene의 toggleHouse()에서 주점에 들어갈 때만 직접 만들어져요.
+  // 이름: 리나 (19세) - 처음 온 용병/여행자를 살갑게 챙겨주는 주점 언니 컨셉.
+  // 다정하고 장난기 섞인 말투로 격려해주는 성격
+  rina: {
+    name: '리나',
+    spriteKey: 'npc_villager2', // 밖에 있는 상인(villager1)과는 다른 얼굴로 구분되게 함
+    hasShop: false,
+    dialogues: [
+      '어서 와~ 처음 보는 얼굴이네? 여기 앉아서 편하게 쉬어.',
+      '무리하지 마. 다치면 꼭 나한테 와서 말해, 알았지?',
+      '저기 게시판 확인해봤어? 너 정도면 금방 늘 거야, 내가 보장할게.',
+      '밤엔 늑대들이 사나워지니까 조심하고. 걱정돼서 그래.',
+      '여기 있는 동안은 집이라고 생각하고 편하게 있어.'
     ]
   }
 };
@@ -120,7 +136,10 @@ export const SHOP_ITEMS = [
   { id: 'carrot', name: '당근', basePrice: 15, category: 'crop', icon: null },
   { id: 'tomato', name: '토마토', basePrice: 25, category: 'crop', icon: null },
 
-  // 주점 전용 음식 - tavernOnly:true는 일반 상인(villager1) 상점에는 안 뜨고, 주점 메뉴에서만 보이게 하는 표시예요
+  // 주점 전용 음식들이에요. category는 포션이랑 똑같이 'consumable'이라
+  // 사용(useItem) 로직을 그대로 재사용할 수 있어요 (먹으면 HP 회복).
+  // tavernOnly: true는 "일반 상인(villager1)한테는 안 팔고, 주점에서만 살 수 있다"는 표시예요.
+  // App.js에서 상인 상점 목록을 만들 때 이 값이 true인 아이템은 걸러내고 안 보여줄 거예요.
   { id: 'food_bread', name: '빵', basePrice: 15, category: 'consumable', effectType: 'heal', effectValue: 25, tavernOnly: true, icon: null },
   { id: 'food_stew', name: '스튜', basePrice: 35, category: 'consumable', effectType: 'heal', effectValue: 60, tavernOnly: true, icon: null }
 ];
@@ -144,7 +163,17 @@ export const FARM_PLOTS = [
   { id: 'farm2', x: 350, y: 250, price: 350 },
   { id: 'farm3', x: 750, y: 400, price: 500 }
 ];
-
+// 퀘스트 목록이에요. targetId는 "무슨 아이템을 몇 개 모아야 하는지"를 가리키는데,
+// 이 값은 SHOP_ITEMS나 ENTITY_TYPES에 있는 id를 그대로 재사용해요
+// (새로 만든 개념이 아니라, 이미 인벤토리에 쌓이는 아이템들을 그대로 활용하는 거예요)
+// rewardGold는 formatCurrency가 쪼개서 보여줄 "구리 단위" 숫자예요 (다른 아이템 가격들과 같은 단위)
+export const QUEST_TEMPLATES = [
+  { id: 'quest_wood', name: '땔감 모으기', targetId: 'tree', targetCount: 5, rewardGold: 80, rewardExp: 20, description: '나무 5개를 모아오세요' },
+  { id: 'quest_stone', name: '석재 조달', targetId: 'stone', targetCount: 5, rewardGold: 100, rewardExp: 25, description: '돌 5개를 모아오세요' },
+  { id: 'quest_wolf', name: '늑대 퇴치', targetId: 'wolf', targetCount: 3, rewardGold: 200, rewardExp: 60, description: '늑대 가죽 3개를 모아오세요 (늑대를 처치하면 얻어요)' },
+  { id: 'quest_rabbit', name: '토끼 사냥', targetId: 'rabbit', targetCount: 4, rewardGold: 120, rewardExp: 35, description: '토끼 고기 4개를 모아오세요' },
+  { id: 'quest_carrot', name: '농부의 부탁', targetId: 'carrot', targetCount: 3, rewardGold: 90, rewardExp: 30, description: '당근 3개를 재배해서 가져오세요' }
+];
 
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
@@ -193,11 +222,13 @@ export const BUILDING_TYPES = {
   },
   tavern: {
     name: '주점',
-    color: 0x6b3a1a,
+    color: 0x6b3a1a, // 실외에서 보이는 건물 색 (진한 나무색)
     width: 120,
     height: 90,
     floorTile: 'floor_wood',
-    isTavern: true, // 이 값이 있으면 GameScene의 toggleHouse()가 일반 집이 아니라 주점 메뉴를 열어줌
+    // isTavern: true는 이 건물에 들어갔을 때 일반 집이 아니라 "주점 메뉴"를 열어야 한다는 표시예요.
+    // GameScene의 toggleHouse()에서 이 값을 확인해서 다르게 동작하게 만들 거예요.
+    isTavern: true,
     furniture: [
       { spriteKey: 'furn_couch', x: 350, y: 200, scale: 4 },
       { spriteKey: 'furn_dresser1', x: 450, y: 200, scale: 4 }

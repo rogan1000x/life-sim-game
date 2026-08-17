@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameScene } from './GameScene';
-import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency } from './gameConfig';
+import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES } from './gameConfig';
 import Phaser from 'phaser';
 // recharts는 React에서 그래프/차트를 쉽게 그릴 수 있게 해주는 라이브러리예요.
 // LineChart: 꺾은선 그래프 전체를 감싸는 틀
@@ -8,6 +8,33 @@ import Phaser from 'phaser';
 // XAxis/YAxis: 가로축/세로축
 // ResponsiveContainer: 부모 크기에 맞춰 그래프 크기를 자동으로 조절해주는 도구
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts';
+
+// 퀘스트의 targetId(예: 'tree', 'wolf')로 실제 사람이 읽을 이름('나무', '늑대 가죽')을 찾아줘요.
+// targetId가 SHOP_ITEMS에 있을 수도, ENTITY_TYPES에 있을 수도 있어서 둘 다 확인함
+function getItemDisplayName(itemId) {
+  const shopItem = SHOP_ITEMS.find(i => i.id === itemId);
+  if (shopItem) return shopItem.name;
+
+  const entityItem = ENTITY_TYPES[itemId];
+  if (entityItem) return entityItem.name;
+
+  return itemId; // 혹시 둘 다 없으면 안전하게 id 자체라도 보여줌
+}
+
+// 장착한 무기의 이름과 내구도를 "낡은 곡괭이 (내구도 18/30)" 같은 문구로 만들어줘요.
+// playerStats 전체를 통째로 받아서, 그 안에서 필요한 값들만 꺼내 씀
+function getEquippedWeaponLabel(playerStats) {
+  const weaponId = playerStats.equipped?.weapon;
+  if (!weaponId) return '없음'; // 아무것도 안 꼈으면 그냥 "없음"
+
+  const item = SHOP_ITEMS.find(i => i.id === weaponId);
+  if (!item) return '없음'; // 혹시 데이터에 없는 이상한 id면 안전하게 "없음" 처리
+
+  // ?? 0 은 "durability 값이 없으면(undefined) 0을 대신 쓴다"는 뜻이에요
+  const durability = playerStats.equipmentDurability?.[weaponId] ?? 0;
+
+  return `${item.name} (내구도 ${durability}/${item.maxDurability})`;
+}
 
 // 상점 아이템의 효과를 사람이 읽기 좋은 텍스트로 변환 (회복형/스탯 강화형 공통 처리)
 function getEffectLabel(item) {
@@ -53,8 +80,6 @@ const panelStyle = {
   boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
 };
 
-
-
 function App() {
   const gameRef = useRef(null);
   const sceneRef = useRef(null); // GameScene 인스턴스에 직접 접근하기 위한 ref
@@ -75,6 +100,9 @@ function App() {
   // 지금 "씨앗 심기 메뉴"가 열려있다면 어느 밭(farm1, farm2...)에 대한 건지 저장해요.
   // null이면 "메뉴가 안 열려있음"이라는 뜻이에요.
   const [farmMenuPlotId, setFarmMenuPlotId] = useState(null);
+
+  // 지금 주점 메뉴가 열려있는지 여부예요. true면 화면에 주점 패널이 보임
+  const [showTavern, setShowTavern] = useState(false);
 
   // 지금 그래프를 펼쳐서 보고 있는 아이템의 id를 저장해요. null이면 "아무 그래프도 안 열려있음"이라는 뜻이에요.
   // 예: 사용자가 "작은 포션" 옆 그래프 버튼을 누르면 이 값이 'potion_small'로 바뀜
@@ -115,6 +143,8 @@ function App() {
     scene.onLog = (text, type) => addLog(text, type); // GameScene에서 이벤트가 발생하면 알림창에 기록
     // GameScene이 "심기 메뉴 열어줘/닫아줘"라고 요청하면(onFarmMenuOpen 호출), 그 값을 그대로 state에 저장함
     scene.onFarmMenuOpen = (plotId) => setFarmMenuPlotId(plotId);
+    // GameScene이 "주점 메뉴 열어줘/닫아줘"라고 요청하면(onTavernOpen 호출), 그 값을 그대로 반영함
+    scene.onTavernOpen = (isOpen) => setShowTavern(isOpen);
 
     const config = {
       type: Phaser.AUTO,
@@ -300,9 +330,7 @@ function App() {
         <p>👟 이동속도: {playerStats.moveSpeed}</p>
         <p style={{ color: THEME.gold }}>💰 {formatCurrency(playerStats.gold)}</p>
         <p>
-          🗡 장착 무기: {playerStats.equipped?.weapon
-            ? SHOP_ITEMS.find(i => i.id === playerStats.equipped.weapon)?.name
-            : '없음'}
+          🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
         </p>
 
         {playerStats.statPoints > 0 && (
@@ -343,7 +371,9 @@ function App() {
                   {shopItem && shopItem.icon && (
                     <img src={`/assets/shop/${shopItem.icon}`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
                   )}
-                  {displayName}: {playerStats.inventory[key]} {isEquipped && '(장착 중)'}
+                  {displayName}: {playerStats.inventory[key]}
+                  {/* isEquipped가 true일 때만 아래 문구가 보여요 (조건부 렌더링, 이전에도 몇 번 나온 패턴이에요) */}
+                  {isEquipped && ` (장착 중, 내구도 ${playerStats.equipmentDurability?.[key] ?? 0}/${shopItem.maxDurability})`}
                 </span>
                 {shopItem && shopItem.category === 'consumable' && (
                   <button
@@ -355,12 +385,34 @@ function App() {
                   </button>
                 )}
                 {shopItem && shopItem.category === 'equipment' && (
-                  <button
-                    onClick={() => isEquipped ? sceneRef.current.unequipItem(shopItem.slot) : sceneRef.current.equipItem(key)}
-                    style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
-                  >
-                    {isEquipped ? '해제' : '장착'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={() => isEquipped ? sceneRef.current.unequipItem(shopItem.slot) : sceneRef.current.equipItem(key)}
+                      style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                    >
+                      {isEquipped ? '해제' : '장착'}
+                    </button>
+                    {/* 내구도 기록이 있고(한 번이라도 착용한 적 있고), 최대치보다 낮을 때만 수리 버튼을 보여줌 */}
+                    {(() => {
+                      const durability = playerStats.equipmentDurability?.[key];
+                      const needsRepair = durability !== undefined && durability < shopItem.maxDurability;
+                      if (!needsRepair) return null;
+
+                      // 수리비를 미리 계산해서 버튼에 보여줌 (GameScene의 repairItem 계산 공식과 동일하게 맞춤)
+                      const missing = shopItem.maxDurability - durability;
+                      const repairCost = Math.max(1, Math.round(shopItem.basePrice * 0.5 * (missing / shopItem.maxDurability)));
+
+                      return (
+                        <button
+                          onClick={() => sceneRef.current.repairItem(key)}
+                          style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                          title="수리하면 내구도가 최대치로 회복돼요"
+                        >
+                          🔧 {formatCurrency(repairCost)}
+                        </button>
+                      );
+                    })()}
+                  </div>
                 )}
               </div>
             );
@@ -465,6 +517,69 @@ function App() {
           </button>
         </div>
       )}
+      {/* showTavern이 true일 때만 이 패널이 화면에 보여요 */}
+      {showTavern && (
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          ...panelStyle,
+          padding: '25px',
+          zIndex: 3000,
+          minWidth: '300px'
+        }}>
+          <h3 style={{ margin: '0 0 6px', color: THEME.gold }}>🍺 주점</h3>
+          <p style={{ color: '#a8927a', margin: '0 0 16px', fontSize: '13px' }}>
+            여행자와 용병들이 쉬어가는 곳이에요
+          </p>
+
+          {/* 쉬기 버튼 - 누르면 즉시 체력이 전부 회복돼요 */}
+          <button
+            onClick={() => sceneRef.current.restAtTavern()}
+            style={{ ...buttonStyle, width: '100%', marginBottom: '18px', padding: '10px' }}
+          >
+            🛌 쉬기 (체력 완전 회복)
+          </button>
+
+          <h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            🍞 음식
+          </h4>
+
+          {/* tavernOnly인 음식들만 여기에 나열함 */}
+          {SHOP_ITEMS.filter(item => item.tavernOnly).map(item => {
+            const price = playerStats.marketPrices?.[item.id] ?? item.basePrice;
+            const merchantStock = playerStats.marketStock?.[item.id] ?? 10;
+            const canAfford = playerStats.gold >= price && merchantStock > 0;
+
+            return (
+              <div key={item.id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                marginTop: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(201,166,107,0.3)'
+              }}>
+                <span>{item.name} (HP +{item.effectValue}) · {formatCurrency(price)}</span>
+                <button
+                  style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
+                  disabled={!canAfford}
+                  // 버튼 하나로 "구매 + 즉시 사용(먹기)"까지 한 번에 처리해요.
+                  // buyItem으로 인벤토리에 음식을 넣자마자, 바로 이어서 useItem으로 그 음식을 먹게 함
+                  // (두 함수가 순서대로 실행되니, 사용자 입장에선 버튼 한 번에 "사서 바로 먹는" 것처럼 느껴짐)
+                  onClick={() => {
+                    sceneRef.current.buyItem(item.id, 1);
+                    sceneRef.current.useItem(item.id, 1);
+                  }}
+                >
+                  구매 후 먹기
+                </button>
+              </div>
+            );
+          })}
+
+          <button onClick={() => setShowTavern(false)} style={{ ...buttonStyle, marginTop: '18px', width: '100%' }}>
+            나가기
+          </button>
+        </div>
+      )}
 
       {showShop && (
         <div style={{
@@ -481,7 +596,8 @@ function App() {
           <p style={{ color: THEME.gold, margin: '0 0 14px' }}>💰 보유: {formatCurrency(playerStats.gold)}</p>
 
           <div style={{ maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
-            {SHOP_ITEMS.map(item => {
+/* tavernOnly가 true인 음식들은 상인 상점 목록에서 제외 - 주점에서만 살 수 있게 함 */
+            {SHOP_ITEMS.filter(item => !item.tavernOnly).map(item => {
               const price = playerStats.marketPrices?.[item.id] ?? item.basePrice;
               const ownedCount = playerStats.inventory[item.id] || 0;
 
