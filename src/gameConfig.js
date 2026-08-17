@@ -140,8 +140,10 @@ export const SHOP_ITEMS = [
   // 사용(useItem) 로직을 그대로 재사용할 수 있어요 (먹으면 HP 회복).
   // tavernOnly: true는 "일반 상인(villager1)한테는 안 팔고, 주점에서만 살 수 있다"는 표시예요.
   // App.js에서 상인 상점 목록을 만들 때 이 값이 true인 아이템은 걸러내고 안 보여줄 거예요.
-  { id: 'food_bread', name: '빵', basePrice: 15, category: 'consumable', effectType: 'heal', effectValue: 25, tavernOnly: true, icon: null },
-  { id: 'food_stew', name: '스튜', basePrice: 35, category: 'consumable', effectType: 'heal', effectValue: 60, tavernOnly: true, icon: null }
+// unlimitedStock: true는 "재고 개념 없이 항상 살 수 있다"는 뜻이에요. 주점이 매번
+  // 새로 만들어주는 음식이라는 설정이라, 다른 아이템처럼 재고가 바닥날 필요가 없어서 추가함
+  { id: 'food_bread', name: '빵', basePrice: 15, category: 'consumable', effectType: 'heal', effectValue: 25, tavernOnly: true, unlimitedStock: true, icon: null },
+  { id: 'food_stew', name: '스튜', basePrice: 35, category: 'consumable', effectType: 'heal', effectValue: 60, tavernOnly: true, unlimitedStock: true, icon: null }
 ];
 
 
@@ -175,6 +177,17 @@ export const QUEST_TEMPLATES = [
   { id: 'quest_carrot', name: '농부의 부탁', targetId: 'carrot', targetCount: 3, rewardGold: 90, rewardExp: 30, description: '당근 3개를 재배해서 가져오세요' }
 ];
 
+// 고용 가능한 동료 목록이에요. hireCost는 다른 가격들처럼 "구리 단위" 숫자고,
+// attackBonus는 전투 중 동료가 근처에 있을 때 몬스터에게 추가로 주는 데미지예요.
+export const COMPANION_TYPES = {
+  traveler: {
+    name: '떠돌이 동료',
+    spriteKey: 'npc_villager3', // 실외의 떠돌이 여행자와 같은 그림을 임시로 재사용 (나중에 전용 그림으로 교체 예정)
+    hireCost: 5000, // 0G 50S 0C
+    attackBonus: 4,
+    description: '함께 몬스터를 상대해주는 든든한 동료예요'
+  }
+};
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
 // 집마다 다른 조합을 줄 수 있음. 새 집을 늘리려면 여기에 항목만 추가하고

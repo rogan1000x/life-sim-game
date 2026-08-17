@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameScene } from './GameScene';
-import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES } from './gameConfig';
+import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES } from './gameConfig';
 import Phaser from 'phaser';
 // recharts는 React에서 그래프/차트를 쉽게 그릴 수 있게 해주는 라이브러리예요.
 // LineChart: 꺾은선 그래프 전체를 감싸는 틀
@@ -549,8 +549,8 @@ function App() {
           {/* tavernOnly인 음식들만 여기에 나열함 */}
           {SHOP_ITEMS.filter(item => item.tavernOnly).map(item => {
             const price = playerStats.marketPrices?.[item.id] ?? item.basePrice;
-            const merchantStock = playerStats.marketStock?.[item.id] ?? 10;
-            const canAfford = playerStats.gold >= price && merchantStock > 0;
+            // 주점 음식은 unlimitedStock이라 재고 체크가 필요 없음 - 골드만 확인하면 됨
+            const canAfford = playerStats.gold >= price;
 
             return (
               <div key={item.id} style={{
@@ -571,6 +571,84 @@ function App() {
                 >
                   구매 후 먹기
                 </button>
+              </div>
+            );
+          })}
+
+          <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            🤝 동료
+          </h4>
+
+          {/* 이미 동료가 있으면 그 정보와 해고 버튼을, 없으면 고용 가능한 목록을 보여줌 */}
+          {playerStats.hiredCompanionId ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <span>현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}</span>
+              <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                해고
+              </button>
+            </div>
+          ) : (
+            // Object.entries()는 객체를 [키, 값] 쌍의 배열로 바꿔줘요. COMPANION_TYPES는
+            // 배열이 아니라 객체라서, map을 쓰려면 이렇게 먼저 배열 형태로 바꿔줘야 해요.
+            Object.entries(COMPANION_TYPES).map(([companionId, info]) => {
+              const canAfford = playerStats.gold >= info.hireCost;
+              return (
+                <div key={companionId} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
+                }}>
+                  <span>{info.name} · {info.description}</span>
+                  <button
+                    onClick={() => sceneRef.current.hireCompanion(companionId)}
+                    disabled={!canAfford}
+                    style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
+                  >
+                    고용 {formatCurrency(info.hireCost)}
+                  </button>
+                </div>
+              );
+            })
+          )}
+
+          <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            📋 퀘스트 게시판
+          </h4>
+
+          {QUEST_TEMPLATES.map(quest => {
+            // 이 퀘스트를 지금 수락한 상태인지 확인 (playerStats.activeQuestIds가 아직 안 왔을 수도 있어서 ?. 와 [] 로 안전하게 처리)
+            const isActive = (playerStats.activeQuestIds || []).includes(quest.id);
+            const currentCount = playerStats.inventory[quest.targetId] || 0;
+            const canTurnIn = isActive && currentCount >= quest.targetCount;
+
+            return (
+              <div key={quest.id} style={{
+                marginTop: '10px', paddingBottom: '10px',
+                borderBottom: '1px solid rgba(201,166,107,0.3)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ color: THEME.gold, fontSize: '13px' }}>{quest.name}</div>
+                    <div style={{ fontSize: '11px', color: '#a8927a', marginTop: '2px' }}>{quest.description}</div>
+                    <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '2px' }}>
+                      {getItemDisplayName(quest.targetId)} {currentCount}/{quest.targetCount}
+                      {' · '}보상 {formatCurrency(quest.rewardGold)} + EXP {quest.rewardExp}
+                    </div>
+                  </div>
+
+                  {/* 세 가지 상태에 따라 버튼이 달라짐: 안 받음 -> 수락 / 받았지만 조건 부족 -> 진행중 표시 / 조건 만족 -> 완료 */}
+                  {!isActive && (
+                    <button onClick={() => sceneRef.current.acceptQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
+                      수락
+                    </button>
+                  )}
+                  {isActive && !canTurnIn && (
+                    <span style={{ fontSize: '11px', color: '#a8927a', flexShrink: 0 }}>진행중</span>
+                  )}
+                  {isActive && canTurnIn && (
+                    <button onClick={() => sceneRef.current.turnInQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
+                      완료
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -596,7 +674,7 @@ function App() {
           <p style={{ color: THEME.gold, margin: '0 0 14px' }}>💰 보유: {formatCurrency(playerStats.gold)}</p>
 
           <div style={{ maxHeight: '340px', overflowY: 'auto', paddingRight: '4px' }}>
-/* tavernOnly가 true인 음식들은 상인 상점 목록에서 제외 - 주점에서만 살 수 있게 함 */
+            {/* tavernOnly가 true인 음식들은 상인 상점 목록에서 제외 - 주점에서만 살 수 있게 함 */}
             {SHOP_ITEMS.filter(item => !item.tavernOnly).map(item => {
               const price = playerStats.marketPrices?.[item.id] ?? item.basePrice;
               const ownedCount = playerStats.inventory[item.id] || 0;

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -79,6 +79,14 @@ export class GameScene extends Phaser.Scene {
     // 주점에 들어갈 때만 실제 오브젝트가 채워져요. 이걸 따로 저장해두는 이유는
     // update()에서 "지금 이 NPC랑 얼마나 가까운지" 매 프레임 거리 계산을 해야 하기 때문이에요.
     this.receptionistNpc = null;
+
+    // 지금 고용한 동료의 종류(id)예요. null이면 "동료 없음"이라는 뜻이에요.
+    this.hiredCompanionId = null;
+    // 실제로 화면에 그려진 동료 오브젝트예요. hiredCompanionId가 있어도, 아직
+    // 화면에 안 만들어졌으면 이건 null일 수 있어요 (둘을 따로 관리하는 이유는
+    // "고용했다는 기록"과 "지금 화면에 그려진 그림"이 서로 다른 타이밍에 필요하기 때문이에요 -
+    // 예를 들어 저장 파일을 불러올 때는 기록은 있지만 그림은 아직 안 만들어진 상태예요)
+    this.companionSprite = null;
 
     // React와 연결하기 위한 콜백 함수들 (App.js에서 설정해줌)
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
@@ -167,6 +175,7 @@ export class GameScene extends Phaser.Scene {
       if (data.plantedCrops !== undefined) this.plantedCrops = data.plantedCrops;
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
+      if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
     }
 
     // 배경 격자무늬
@@ -234,6 +243,12 @@ export class GameScene extends Phaser.Scene {
     this.player.body.setCollideWorldBounds(true);
     // 이 에셋은 방향당 프레임이 1장뿐이라 별도 애니메이션 정의 없이,
     // update()에서 방향이 바뀔 때마다 setFrame으로 직접 프레임을 전환함
+
+    // 저장 파일에 고용된 동료 기록이 있었다면, 여기서 실제로 화면에 다시 그려줌
+    // (player가 이 시점에 이미 만들어져 있어야 그 옆에 동료를 배치할 수 있어서 여기 위치에 둠)
+    if (this.hiredCompanionId) {
+      this.spawnCompanion(this.hiredCompanionId);
+    }
 
     this.cursors = this.input.keyboard.createCursorKeys();
     this.spaceKey = this.input.keyboard.addKey('SPACE');
@@ -376,7 +391,7 @@ export class GameScene extends Phaser.Scene {
 
     this.updateGameClock(delta); // 실내/실외 상관없이 시간은 항상 흐르게 함
 
-   // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
+    // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
     if (this.isInsideHouse) {
       this.handleMovement(); // 실내에서도 이동은 가능해야 하니 별도 처리
       this.checkHouseExit();  // H키로 나가는 것만 체크
@@ -385,6 +400,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.handleMovement();
+    this.updateCompanionFollow(); // 동료가 있으면 플레이어를 따라오게 함
 
     // 몬스터는 항상 플레이어를 추적
     this.entities.getChildren().forEach(entity => {
@@ -470,6 +486,17 @@ export class GameScene extends Phaser.Scene {
           entity.hp -= this.attackPower;
           this.playHitSound();
           this.reduceWeaponDurability(); // 때릴 때마다 지금 낀 무기의 내구도를 깎음
+
+          // 동료가 있고, 지금 공격 중인 몬스터 근처(150px 이내)에 있다면 같이 데미지를 줌
+          if (this.companionSprite) {
+            const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+            const companionDistance = Phaser.Math.Distance.Between(
+              this.companionSprite.x, this.companionSprite.y, entity.x, entity.y
+            );
+            if (companionDistance < 150) {
+              entity.hp -= companionInfo.attackBonus;
+            }
+          }
 
           if (entity.hp <= 0) {
             // 채집 자원과 동일한 방식으로 숨김 상태 관리 (실내 여부와 충돌 방지)
@@ -621,7 +648,8 @@ export class GameScene extends Phaser.Scene {
       marketStock: this.marketStock,
       ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
       equipmentDurability: this.equipmentDurability,
-      activeQuestIds: this.activeQuestIds
+      activeQuestIds: this.activeQuestIds,
+      hiredCompanionId: this.hiredCompanionId
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -664,7 +692,7 @@ export class GameScene extends Phaser.Scene {
       this.currentHouse = this.nearbyHouse;
       const info = BUILDING_TYPES[this.currentHouse.buildingType];
 
-this.isInsideHouse = true;
+      this.isInsideHouse = true;
       // isInsideHouse를 true로 바꾼 "직후"에 호출해야, refreshFarmPlotVisual이
       // 실내 상태를 정확히 보고 즉시 숨겨줘요 (5초 타이머를 기다릴 필요 없이 바로 반영됨)
       FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
@@ -672,6 +700,13 @@ this.isInsideHouse = true;
       // 화면 위에 지금 들어온 건물의 이름을 표시함 (예: "주점", "내 집")
       this.buildingNameText.setText(info.name);
       this.buildingNameText.setVisible(true);
+
+      // 동료는 건물 안까지 따라 들어오지 않는다는 설정이라, 실내에서는 숨겨둠
+      // (destroy로 아예 없애지는 않고, 다시 나갈 때 그대로 보이게 하기 위해 setVisible만 사용)
+      if (this.companionSprite) {
+        this.companionSprite.setVisible(false);
+        this.companionSprite.body.enable = false;
+      }
 
       // 실외 오브젝트들을 각각 순회하며 확실히 숨기고 충돌도 비활성화
       this.setOutdoorObjectsActive(false);
@@ -688,7 +723,7 @@ this.isInsideHouse = true;
       this.furnitureObjects.forEach(f => f.destroy());
       this.furnitureObjects = [];
 
-info.furniture.forEach(item => {
+      info.furniture.forEach(item => {
         const furniture = this.add.sprite(item.x, item.y, item.spriteKey);
         furniture.setScale(item.scale || 4);
         this.physics.add.existing(furniture, true);
@@ -705,7 +740,7 @@ info.furniture.forEach(item => {
         this.physics.add.collider(this.player, counter);
         this.furnitureObjects.push(counter); // furnitureObjects에 넣어두면 나갈 때 자동으로 같이 정리됨
 
-// 길드 담당자(리나) - NPC_DATA['rina'].spriteKey를 참조해서 만들어요.
+        // 길드 담당자(리나) - NPC_DATA['rina'].spriteKey를 참조해서 만들어요.
         // 이렇게 하드코딩 대신 데이터를 참조하면, 나중에 gameConfig.js에서 spriteKey만
         // 바꿔도(전용 그림을 구했을 때) 이 코드는 손댈 필요가 없어져요.
         // 프레임 번호 1은 "아래를 보는" 방향이에요 (앞서 만든 directionFrames와 같은 규칙)
@@ -726,19 +761,27 @@ info.furniture.forEach(item => {
       }
 
     } else {
-// ===== 실외 복귀 =====
+      // ===== 실외 복귀 =====
       this.isInsideHouse = false;
       // 여기서도 마찬가지로 isInsideHouse를 false로 바꾼 직후에 호출해서 바로 다시 보이게 함
       FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
       this.cameras.main.setBackgroundColor('#4a7c3c');
 
-     // 건물에서 나왔으니 이름 표시도 숨김
+      // 건물에서 나왔으니 이름 표시도 숨김
       this.buildingNameText.setVisible(false);
 
       // 길드 담당자는 이미 위에서 furnitureObjects.forEach(f => f.destroy())로 화면에서는
       // 지워졌지만, this.receptionistNpc 변수 자체는 여전히 "죽은 오브젝트"를 가리키고 있어서
       // null로 비워줘야 update()에서 실수로 그 오브젝트를 계속 참조하는 걸 막을 수 있어요.
       this.receptionistNpc = null;
+
+      // 동료를 다시 보이게 하고, 문 앞에서 갑자기 저 멀리 있지 않도록 플레이어 옆으로 위치를 옮겨줌
+      if (this.companionSprite) {
+        this.companionSprite.setVisible(true);
+        this.companionSprite.body.enable = true;
+        this.companionSprite.x = this.player.x - 60;
+        this.companionSprite.y = this.player.y;
+      }
 
       // 실내 바닥 타일 제거 (다음에 다른 집에 들어갔을 때 이전 바닥이 남지 않도록)
       if (this.floorTileSprite) {
@@ -794,7 +837,7 @@ info.furniture.forEach(item => {
     }
   }
 
-// 실내에 있을 때 H키로 나가기만 체크 (다른 실외 로직은 실행 안 함)
+  // 실내에 있을 때 H키로 나가기만 체크 (다른 실외 로직은 실행 안 함)
   checkHouseExit() {
     if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
       this.toggleHouse();
@@ -812,7 +855,7 @@ info.furniture.forEach(item => {
     );
     if (distance >= 100) return; // 너무 멀면 상호작용 안 함
 
-if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
       const npcType = 'rina';
       const info = NPC_DATA[npcType];
 
@@ -832,6 +875,98 @@ if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
       }
       this.dialogueIndex = (this.dialogueIndex + 1) % info.dialogues.length;
     }
+  }
+
+  // 동료를 화면에 실제로 만들어주는 함수예요. 고용할 때, 그리고 저장 파일을 불러올 때 둘 다 사용해요.
+  spawnCompanion(companionId) {
+    const info = COMPANION_TYPES[companionId];
+    if (!info) return;
+
+    // 플레이어 바로 왼쪽에서 시작하도록 배치함
+    const spawnX = this.player.x - 60;
+    const spawnY = this.player.y;
+
+    // 프레임 번호 1 = "아래를 보는" 방향으로 시작 (플레이어/NPC와 같은 규칙)
+    this.companionSprite = this.add.sprite(spawnX, spawnY, info.spriteKey, 1);
+    this.companionSprite.setScale(5); // 다른 캐릭터들과 동일한 배율
+
+    this.physics.add.existing(this.companionSprite); // 동적 물리 바디 (움직여야 하니 정적이 아님)
+    this.companionSprite.body.setCollideWorldBounds(true);
+  }
+
+  // 매 프레임 호출돼서, 동료가 플레이어를 따라오게 만드는 함수예요.
+  updateCompanionFollow() {
+    if (!this.companionSprite) return; // 동료가 없으면 할 일이 없음
+
+    const followDistance = 70; // 이 거리보다 가까우면 멈춤 (너무 붙어서 겹쳐 보이지 않게)
+    const distance = Phaser.Math.Distance.Between(
+      this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y
+    );
+
+    if (distance > followDistance) {
+      const angle = Phaser.Math.Angle.Between(
+        this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y
+      );
+      const speed = 180; // 플레이어 기본 이동속도(200)보다 살짝 느리게 해서 자연스럽게 뒤처지는 느낌을 줌
+
+      this.companionSprite.body.setVelocity(
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed
+      );
+
+      // 이동 방향에 따라 동료도 플레이어와 같은 방식(directionFrames)으로 프레임을 바꿔줌
+      // Math.abs()는 절댓값(부호를 뗀 값)을 구하는 함수예요. 가로/세로 중 어느 쪽으로 더 많이
+      // 움직이는지를 비교해서, 더 큰 쪽을 기준으로 방향을 정함
+      const dx = this.player.x - this.companionSprite.x;
+      const dy = this.player.y - this.companionSprite.y;
+
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.companionSprite.setFrame(dx > 0 ? this.directionFrames.right : this.directionFrames.left);
+      } else {
+        this.companionSprite.setFrame(dy > 0 ? this.directionFrames.down : this.directionFrames.up);
+      }
+    } else {
+      this.companionSprite.body.setVelocity(0, 0); // 충분히 가까우면 멈춤
+    }
+  }
+
+  // 주점에서 동료를 고용할 때 호출돼요.
+  hireCompanion(companionId) {
+    if (this.hiredCompanionId) {
+      this.addLog('이미 동료가 있어요. 먼저 해고해주세요', 'info');
+      return;
+    }
+
+    const info = COMPANION_TYPES[companionId];
+    if (!info) return;
+
+    if (this.gold < info.hireCost) {
+      this.addLog('골드가 부족해서 고용할 수 없어요', 'death');
+      return;
+    }
+
+    this.gold -= info.hireCost;
+    this.hiredCompanionId = companionId;
+    this.spawnCompanion(companionId);
+
+    this.addLog(`${info.name}을(를) 고용했어요!`, 'gain');
+    this.syncStatsToReact();
+  }
+
+  // 동료를 해고해요. 골드는 돌려받지 않아요.
+  dismissCompanion() {
+    if (!this.hiredCompanionId) return;
+
+    const info = COMPANION_TYPES[this.hiredCompanionId];
+
+    if (this.companionSprite) {
+      this.companionSprite.destroy();
+      this.companionSprite = null;
+    }
+    this.hiredCompanionId = null;
+
+    this.addLog(`${info.name}과(와) 헤어졌어요`, 'info');
+    this.syncStatsToReact();
   }
 
   // 게임 이벤트를 React 쪽 알림창에 전달 (처치/획득/사망 등). type에 따라 알림 색이 달라짐
@@ -867,7 +1002,8 @@ if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
         // 내구도도 새로 복사해서 넘겨줘야 App.js에서 "18/30" 같은 표시를 할 수 있어요
         equipmentDurability: { ...this.equipmentDurability },
         // [...배열] 은 배열을 새로 복사하는 문법이에요 ({...객체}랑 비슷한 원리예요)
-        activeQuestIds: [...this.activeQuestIds]
+        activeQuestIds: [...this.activeQuestIds],
+        hiredCompanionId: this.hiredCompanionId
       });
     }
     this.saveGame();
@@ -1097,9 +1233,13 @@ if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
 
   // 재고(marketStock)를 기준치(10)와 비교해 현재 시세를 계산
   // 재고가 적을수록 비싸지고, 많을수록 싸짐. 배율을 0.4~2.5배로 제한해 가격이 너무 극단적으로 치닫지 않게 함
-  getMarketPrice(itemId) {
+getMarketPrice(itemId) {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return 0;
+
+    // 무제한 재고 아이템(주점 음식 등)은 재고에 따라 가격이 오르내릴 필요가 없어서,
+    // 계산 없이 기준가(basePrice)를 그대로 돌려줌
+    if (item.unlimitedStock) return item.basePrice;
 
     const baselineStock = 10;
     const stock = this.marketStock[itemId] ?? baselineStock;
@@ -1125,19 +1265,25 @@ if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
     // 이렇게 한 개씩 나눠서 처리하는 이유는, 살 때마다 가격이 조금씩 오르기 때문이에요
     // (한 번에 10개를 사도 다 같은 가격이 아니라, 1개 값 → 2개째 값 → 3개째 값... 이렇게 달라짐)
     for (let i = 0; i < quantity; i++) {
-      // ?? 10 은 "만약 marketStock[itemId]가 아직 없다면(undefined) 10을 기본값으로 쓴다"는 뜻이에요
-      const currentStock = this.marketStock[itemId] ?? 10;
+      // 무제한 재고 아이템이 아닐 때만 재고를 확인/차감함
+      if (!item.unlimitedStock) {
+        // ?? 10 은 "만약 marketStock[itemId]가 아직 없다면(undefined) 10을 기본값으로 쓴다"는 뜻이에요
+        const currentStock = this.marketStock[itemId] ?? 10;
 
-      // 상인 재고가 0이면 더 이상 팔 물건이 없다는 뜻이니, 반복을 여기서 멈춰요 (break)
-      if (currentStock <= 0) break;
+        // 상인 재고가 0이면 더 이상 팔 물건이 없다는 뜻이니, 반복을 여기서 멈춰요 (break)
+        if (currentStock <= 0) break;
+      }
 
       const price = this.getMarketPrice(itemId);
       if (this.gold < price) break; // 골드가 부족해지면 거기서 멈추고, 그때까지 산 만큼만 인정
 
       this.gold -= price;
       totalSpent += price;
-      // 이제는 재고가 진짜로 0까지 줄어들 수 있어요 (예전엔 Math.max(1, ...)로 최소 1을 유지했었음)
-      this.marketStock[itemId] = currentStock - 1;
+
+      if (!item.unlimitedStock) {
+        // 이제는 재고가 진짜로 0까지 줄어들 수 있어요 (예전엔 Math.max(1, ...)로 최소 1을 유지했었음)
+        this.marketStock[itemId] = (this.marketStock[itemId] ?? 10) - 1;
+      }
       boughtCount++;
     }
     if (boughtCount === 0) return;
@@ -1365,7 +1511,7 @@ if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
     this.refreshFarmPlotVisual(plotConfig.id);
   }
 
-  
+
   // 밭 하나의 "지금 상태"를 보고 화면을 최신으로 다시 그려주는 함수예요.
   // 구매 여부, 심어진 작물, 자란 정도, 그리고 "지금 실내인지"까지 전부 이 함수 하나가 판단해요.
   // 이렇게 판단 기준을 한 곳에 모아두면, 나중에 이 함수를 어디서 호출하든
