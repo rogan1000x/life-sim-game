@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -34,6 +34,11 @@ export class GameScene extends Phaser.Scene {
     // 배열(리스트)이라서 여러 퀘스트를 동시에 진행할 수 있어요.
     // 예: ['quest_wood', 'quest_wolf'] 라면 두 퀘스트를 동시에 수락한 상태라는 뜻이에요.
     this.activeQuestIds = [];
+
+    // 지금 용병 등급이에요. RANK_TIERS 배열 안의 id 중 하나('bronze', 'silver'...)를 저장해요.
+    this.rank = 'bronze';
+    // 지금까지 완료한 퀘스트의 총 개수예요. 승급 조건으로 쓰여요 (반복 완료해도 계속 누적됨)
+    this.questsCompletedCount = 0;
     this.isDead = false;         // 사망 후 부활 대기 중인지 여부 (중복 사망 처리 방지용)
     this.marketStock = {};       // 아이템별 시장 재고 (기준치 10, 사면 감소/팔면 증가하며 가격에 영향을 줌)
 
@@ -176,6 +181,8 @@ export class GameScene extends Phaser.Scene {
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
       if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
+      if (data.rank !== undefined) this.rank = data.rank;
+      if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
     }
 
     // 배경 격자무늬
@@ -649,7 +656,8 @@ export class GameScene extends Phaser.Scene {
       ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
       equipmentDurability: this.equipmentDurability,
       activeQuestIds: this.activeQuestIds,
-      hiredCompanionId: this.hiredCompanionId
+      hiredCompanionId: this.hiredCompanionId,
+      rank: this.rank, questsCompletedCount: this.questsCompletedCount
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -1003,7 +1011,9 @@ export class GameScene extends Phaser.Scene {
         equipmentDurability: { ...this.equipmentDurability },
         // [...배열] 은 배열을 새로 복사하는 문법이에요 ({...객체}랑 비슷한 원리예요)
         activeQuestIds: [...this.activeQuestIds],
-        hiredCompanionId: this.hiredCompanionId
+        hiredCompanionId: this.hiredCompanionId,
+        rank: this.rank,
+        questsCompletedCount: this.questsCompletedCount
       });
     }
     this.saveGame();
@@ -1179,6 +1189,16 @@ export class GameScene extends Phaser.Scene {
     const quest = QUEST_TEMPLATES.find(q => q.id === questId);
     if (!quest) return;
 
+    // RANK_TIERS에서 "지금 내 등급"과 "퀘스트가 요구하는 등급"의 order(순서 숫자)를 각각 찾아서 비교해요.
+    // find()는 조건에 맞는 첫 번째 항목을 찾아주는 함수예요.
+    const myRankOrder = RANK_TIERS.find(r => r.id === this.rank).order;
+    const requiredRankOrder = RANK_TIERS.find(r => r.id === quest.minRank).order;
+
+    if (myRankOrder < requiredRankOrder) {
+      this.addLog('등급이 부족해서 받을 수 없는 의뢰예요', 'info');
+      return;
+    }
+
     this.activeQuestIds.push(questId); // 배열 맨 뒤에 이 퀘스트 id를 추가함
     this.addLog(`퀘스트 수락: ${quest.name}`, 'info');
     this.syncStatsToReact();
@@ -1207,9 +1227,43 @@ export class GameScene extends Phaser.Scene {
     // filter()는 배열에서 조건에 맞는 것만 남기고 새 배열을 만들어주는 함수예요.
     // "이 퀘스트 id와 다른 것들만 남겨라"라고 하면, 결과적으로 이 퀘스트만 배열에서 빠지게 돼요.
     this.activeQuestIds = this.activeQuestIds.filter(id => id !== questId);
+    this.questsCompletedCount++; // 승급 조건으로 쓰이는 누적 완료 횟수를 하나 늘림
 
     this.addLog(`퀘스트 완료: ${quest.name} (+${formatCurrency(quest.rewardGold)})`, 'gain');
     this.gainExp(quest.rewardExp); // gainExp 안에서 syncStatsToReact도 같이 호출되니 따로 또 부를 필요 없음
+  }
+
+  // 리나에게 승급 시험을 봐요. 조건(레벨/완료 퀘스트 수)을 다 채우고 시험비를 내면 통과해요.
+  takeExam() {
+    const myRankOrder = RANK_TIERS.find(r => r.id === this.rank).order;
+
+    // RANK_TIERS 배열에서 "지금 내 등급보다 order가 딱 1 높은" 등급을 찾아요.
+    // 못 찾으면(이미 최고 등급이면) undefined가 나와요.
+    const nextRank = RANK_TIERS.find(r => r.order === myRankOrder + 1);
+
+    if (!nextRank) {
+      this.addLog('이미 최고 등급이에요', 'info');
+      return;
+    }
+
+    if (this.level < nextRank.requiredLevel) {
+      this.addLog(`레벨이 부족해요 (필요: ${nextRank.requiredLevel})`, 'info');
+      return;
+    }
+    if (this.questsCompletedCount < nextRank.requiredQuests) {
+      this.addLog(`완료한 의뢰 수가 부족해요 (필요: ${nextRank.requiredQuests}회)`, 'info');
+      return;
+    }
+    if (this.gold < nextRank.examFee) {
+      this.addLog('시험비가 부족해요', 'death');
+      return;
+    }
+
+    this.gold -= nextRank.examFee;
+    this.rank = nextRank.id;
+
+    this.addLog(`승급 시험 통과! ${nextRank.name}이(가) 되었어요`, 'gain');
+    this.syncStatsToReact();
   }
 
   // 2초마다 호출되는 함수예요. 지금 이 순간의 모든 아이템 가격을 한 번씩 기록에 남겨요.
@@ -1233,7 +1287,7 @@ export class GameScene extends Phaser.Scene {
 
   // 재고(marketStock)를 기준치(10)와 비교해 현재 시세를 계산
   // 재고가 적을수록 비싸지고, 많을수록 싸짐. 배율을 0.4~2.5배로 제한해 가격이 너무 극단적으로 치닫지 않게 함
-getMarketPrice(itemId) {
+  getMarketPrice(itemId) {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return 0;
 

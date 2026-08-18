@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameScene } from './GameScene';
-import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES } from './gameConfig';
+import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS } from './gameConfig';
 import Phaser from 'phaser';
 // recharts는 React에서 그래프/차트를 쉽게 그릴 수 있게 해주는 라이브러리예요.
 // LineChart: 꺾은선 그래프 전체를 감싸는 틀
@@ -87,7 +87,7 @@ function App() {
   const [playerStats, setPlayerStats] = useState({
     level: 1, exp: 0, expNeeded: 100, hp: 100, maxHp: 100,
     statPoints: 0, attackPower: 10, moveSpeed: 200, gold: 0, inventory: {},
-    equipped: { weapon: null }
+    equipped: { weapon: null }, rank: 'bronze', questsCompletedCount: 0
   });
 
   const [showAdmin, setShowAdmin] = useState(false);
@@ -329,6 +329,7 @@ function App() {
         <p>⚔ 공격력: {playerStats.attackPower}</p>
         <p>👟 이동속도: {playerStats.moveSpeed}</p>
         <p style={{ color: THEME.gold }}>💰 {formatCurrency(playerStats.gold)}</p>
+        <p>🎖 등급: {RANK_TIERS.find(r => r.id === playerStats.rank)?.name}</p>
         <p>
           🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
         </p>
@@ -574,6 +575,39 @@ function App() {
               </div>
             );
           })}
+<h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            🎖 용병 등급
+          </h4>
+
+          {(() => {
+            const myRank = RANK_TIERS.find(r => r.id === playerStats.rank);
+            // order가 내 등급보다 딱 1 높은 등급을 다음 목표로 찾음
+            const nextRank = RANK_TIERS.find(r => r.order === myRank.order + 1);
+
+            return (
+              <div style={{ marginBottom: '18px' }}>
+                <p style={{ margin: '0 0 6px' }}>현재 등급: <span style={{ color: THEME.gold }}>{myRank.name}</span></p>
+
+                {!nextRank ? (
+                  <p style={{ fontSize: '12px', color: '#a8927a' }}>이미 최고 등급이에요</p>
+                ) : (
+                  <>
+                    <p style={{ fontSize: '12px', color: '#c9a66b', margin: '0 0 8px' }}>
+                      {nextRank.name} 승급 조건: 레벨 {playerStats.level}/{nextRank.requiredLevel}
+                      {' · '}완료 의뢰 {playerStats.questsCompletedCount}/{nextRank.requiredQuests}
+                      {' · '}시험비 {formatCurrency(nextRank.examFee)}
+                    </p>
+                    <button
+                      onClick={() => sceneRef.current.takeExam()}
+                      style={{ ...buttonStyle, width: '100%' }}
+                    >
+                      리나에게 승급 시험 보기
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
             🤝 동료
@@ -619,6 +653,11 @@ function App() {
             const currentCount = playerStats.inventory[quest.targetId] || 0;
             const canTurnIn = isActive && currentCount >= quest.targetCount;
 
+            // 내 등급이 이 퀘스트가 요구하는 등급보다 낮으면 잠긴 상태예요
+            const myRankOrder = RANK_TIERS.find(r => r.id === playerStats.rank)?.order ?? 0;
+            const requiredRankOrder = RANK_TIERS.find(r => r.id === quest.minRank)?.order ?? 0;
+            const isLocked = myRankOrder < requiredRankOrder;
+
             return (
               <div key={quest.id} style={{
                 marginTop: '10px', paddingBottom: '10px',
@@ -634,8 +673,13 @@ function App() {
                     </div>
                   </div>
 
-                  {/* 세 가지 상태에 따라 버튼이 달라짐: 안 받음 -> 수락 / 받았지만 조건 부족 -> 진행중 표시 / 조건 만족 -> 완료 */}
-                  {!isActive && (
+                  {/* 네 가지 상태에 따라 버튼이 달라짐: 등급 부족 -> 잠김 / 안 받음 -> 수락 / 받았지만 조건 부족 -> 진행중 표시 / 조건 만족 -> 완료 */}
+                  {isLocked && (
+                    <span style={{ fontSize: '11px', color: THEME.red, flexShrink: 0 }}>
+                      🔒 {RANK_TIERS.find(r => r.id === quest.minRank)?.name} 이상
+                    </span>
+                  )}
+                  {!isLocked && !isActive && (
                     <button onClick={() => sceneRef.current.acceptQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
                       수락
                     </button>

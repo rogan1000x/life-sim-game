@@ -165,16 +165,31 @@ export const FARM_PLOTS = [
   { id: 'farm2', x: 350, y: 250, price: 350 },
   { id: 'farm3', x: 750, y: 400, price: 500 }
 ];
+
+// 용병 등급 목록이에요. order는 등급의 순서를 숫자로 나타낸 거예요 (낮을수록 초급).
+// 이 숫자로 "지금 등급이 이 퀘스트를 받을 수 있는 등급보다 높은지 낮은지"를 비교해요.
+// examFee는 이 등급으로 "승급 시험을 볼 때" 내야 하는 시험비예요 (구리 단위, formatCurrency로 표시됨)
+export const RANK_TIERS = [
+  { id: 'bronze', name: '초급 용병', order: 0, requiredLevel: 1, requiredQuests: 0, examFee: 0 },
+  { id: 'silver', name: '중급 용병', order: 1, requiredLevel: 3, requiredQuests: 3, examFee: 10000 },
+  { id: 'gold', name: '고급 용병', order: 2, requiredLevel: 6, requiredQuests: 8, examFee: 30000 },
+  { id: 'platinum', name: '특급 용병', order: 3, requiredLevel: 10, requiredQuests: 15, examFee: 80000 }
+];
+
+
 // 퀘스트 목록이에요. targetId는 "무슨 아이템을 몇 개 모아야 하는지"를 가리키는데,
 // 이 값은 SHOP_ITEMS나 ENTITY_TYPES에 있는 id를 그대로 재사용해요
 // (새로 만든 개념이 아니라, 이미 인벤토리에 쌓이는 아이템들을 그대로 활용하는 거예요)
 // rewardGold는 formatCurrency가 쪼개서 보여줄 "구리 단위" 숫자예요 (다른 아이템 가격들과 같은 단위)
+// minRank는 이 퀘스트를 받을 수 있는 최소 등급이에요 (RANK_TIERS의 id 중 하나)
 export const QUEST_TEMPLATES = [
-  { id: 'quest_wood', name: '땔감 모으기', targetId: 'tree', targetCount: 5, rewardGold: 80, rewardExp: 20, description: '나무 5개를 모아오세요' },
-  { id: 'quest_stone', name: '석재 조달', targetId: 'stone', targetCount: 5, rewardGold: 100, rewardExp: 25, description: '돌 5개를 모아오세요' },
-  { id: 'quest_wolf', name: '늑대 퇴치', targetId: 'wolf', targetCount: 3, rewardGold: 200, rewardExp: 60, description: '늑대 가죽 3개를 모아오세요 (늑대를 처치하면 얻어요)' },
-  { id: 'quest_rabbit', name: '토끼 사냥', targetId: 'rabbit', targetCount: 4, rewardGold: 120, rewardExp: 35, description: '토끼 고기 4개를 모아오세요' },
-  { id: 'quest_carrot', name: '농부의 부탁', targetId: 'carrot', targetCount: 3, rewardGold: 90, rewardExp: 30, description: '당근 3개를 재배해서 가져오세요' }
+  { id: 'quest_wood', name: '땔감 모으기', targetId: 'tree', targetCount: 5, rewardGold: 80, rewardExp: 20, minRank: 'bronze', description: '나무 5개를 모아오세요' },
+  { id: 'quest_stone', name: '석재 조달', targetId: 'stone', targetCount: 5, rewardGold: 100, rewardExp: 25, minRank: 'bronze', description: '돌 5개를 모아오세요' },
+  { id: 'quest_wolf', name: '늑대 퇴치', targetId: 'wolf', targetCount: 3, rewardGold: 200, rewardExp: 60, minRank: 'bronze', description: '늑대 가죽 3개를 모아오세요 (늑대를 처치하면 얻어요)' },
+  { id: 'quest_rabbit', name: '토끼 사냥', targetId: 'rabbit', targetCount: 4, rewardGold: 120, rewardExp: 35, minRank: 'bronze', description: '토끼 고기 4개를 모아오세요' },
+  { id: 'quest_carrot', name: '농부의 부탁', targetId: 'carrot', targetCount: 3, rewardGold: 90, rewardExp: 30, minRank: 'bronze', description: '당근 3개를 재배해서 가져오세요' },
+  { id: 'quest_wolf_pack', name: '늑대 무리 소탕', targetId: 'wolf', targetCount: 8, rewardGold: 400, rewardExp: 120, minRank: 'silver', description: '늑대 가죽 8개를 모아오세요 (숙련자용 의뢰)' },
+  { id: 'quest_grand_hunt', name: '대규모 늑대 토벌', targetId: 'wolf', targetCount: 15, rewardGold: 900, rewardExp: 250, minRank: 'gold', description: '늑대 가죽 15개를 모아오세요 (전문가용 의뢰)' }
 ];
 
 // 고용 가능한 동료 목록이에요. hireCost는 다른 가격들처럼 "구리 단위" 숫자고,
