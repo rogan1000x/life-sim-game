@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameScene } from './GameScene';
-import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS } from './gameConfig';
+import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS } from './gameConfig';
 import Phaser from 'phaser';
 // recharts는 React에서 그래프/차트를 쉽게 그릴 수 있게 해주는 라이브러리예요.
 // LineChart: 꺾은선 그래프 전체를 감싸는 틀
@@ -87,7 +87,7 @@ function App() {
   const [playerStats, setPlayerStats] = useState({
     level: 1, exp: 0, expNeeded: 100, hp: 100, maxHp: 100,
     statPoints: 0, attackPower: 10, moveSpeed: 200, gold: 0, inventory: {},
-    equipped: { weapon: null }, rank: 'bronze', questsCompletedCount: 0
+    equipped: { weapon: null }, rank: 'bronze', questsCompletedCount: 0, playerClass: null
   });
 
   const [showAdmin, setShowAdmin] = useState(false);
@@ -167,7 +167,7 @@ function App() {
       game.destroy(true);
     };
   }, [gameStarted]);
-
+  
   // Admin 무적 모드 체크박스 값을 GameScene에 실시간 반영
   useEffect(() => {
     if (sceneRef.current) {
@@ -331,10 +331,13 @@ function App() {
         <p style={{ color: THEME.gold }}>💰 {formatCurrency(playerStats.gold)}</p>
         <p>🎖 등급: {RANK_TIERS.find(r => r.id === playerStats.rank)?.name}</p>
         <p>
+          {CLASS_TYPES[playerStats.playerClass]?.icon} 직업: {CLASS_TYPES[playerStats.playerClass]?.name || '미지정'}
+        </p>
+        <p>
           🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
         </p>
 
-        {playerStats.statPoints > 0 && (
+                {playerStats.statPoints > 0 && (
           <div style={{
             marginTop: '12px', padding: '10px',
             backgroundColor: 'rgba(255,215,106,0.12)',
@@ -346,6 +349,44 @@ function App() {
               <button style={buttonStyle} onClick={() => sceneRef.current.allocateStat('hp')}>❤ 체력 +20</button>
               <button style={buttonStyle} onClick={() => sceneRef.current.allocateStat('speed')}>👟 속도 +20</button>
             </div>
+          </div>
+        )}
+
+        {/* 직업이 없으면 스킬 자체가 없다는 안내만 보여줌 */}
+        {!playerStats.playerClass ? (
+          <p style={{ marginTop: '12px', fontSize: '12px', color: '#a8927a', fontStyle: 'italic' }}>
+            주점에서 직업을 정하면 전용 스킬을 배울 수 있어요
+          </p>
+        ) : (
+          <div style={{ marginTop: '12px' }}>
+            <p style={{ margin: '0 0 8px', color: THEME.gold }}>
+              📖 스킬 포인트: {playerStats.skillPoints || 0}
+            </p>
+            {/* 내 직업의 스킬 목록만 CLASS_SKILLS에서 꺼내서 하나씩 보여줌 */}
+            {(CLASS_SKILLS[playerStats.playerClass] || []).map(skill => {
+              const currentLevel = playerStats.skillLevels?.[skill.id] || 0;
+              const isMaxed = currentLevel >= skill.maxLevel;
+              const canUpgrade = (playerStats.skillPoints || 0) > 0 && !isMaxed;
+
+              return (
+                <div key={skill.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  marginBottom: '6px', padding: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px'
+                }}>
+                  <span style={{ fontSize: '12px' }}>
+                    {skill.name} Lv.{currentLevel}/{skill.maxLevel}<br />
+                    <span style={{ fontSize: '10px', color: '#a8927a' }}>{skill.description}</span>
+                  </span>
+                  <button
+                    onClick={() => sceneRef.current.upgradeSkill(skill.id)}
+                    disabled={!canUpgrade}
+                    style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px', opacity: canUpgrade ? 1 : 0.4, cursor: canUpgrade ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+                  >
+                    {isMaxed ? '최대' : '+'}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -445,8 +486,21 @@ function App() {
             />
             {' '}무적 모드
           </label>
-          <button onClick={() => sceneRef.current.revivePlayer()} style={{ ...buttonStyle, marginBottom: '10px', width: '100%' }}>
+                    <button onClick={() => sceneRef.current.revivePlayer()} style={{ ...buttonStyle, marginBottom: '10px', width: '100%' }}>
             부활 (HP 회복)
+          </button>
+          <button
+            onClick={() => {
+              // window.confirm은 브라우저 기본 확인창을 띄우는 함수예요. "확인"을 눌러야 true를 반환해서
+              // 실제로 초기화가 진행되고, "취소"를 누르면 false라서 아무 일도 안 일어나요.
+              // 되돌릴 수 없는 동작이라 실수로 누르는 걸 막기 위한 안전장치예요.
+              if (window.confirm('레벨과 직업을 정말 초기화할까요?')) {
+                sceneRef.current.resetProgress();
+              }
+            }}
+            style={{ ...buttonStyle, marginBottom: '10px', width: '100%', backgroundColor: '#7a3030' }}
+          >
+            레벨/직업 초기화
           </button>
           <p style={{ fontSize: '12px', color: '#a87878', margin: 0 }}>
             'P' 키로 패널 열기/닫기
@@ -575,13 +629,49 @@ function App() {
               </div>
             );
           })}
-<h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                    {/* 직업이 아직 없으면(playerClass가 null이면), 등급/퀘스트 대신 직업 등록 화면을 보여줌 */}
+          {!playerStats.playerClass ? (
+            <div style={{ marginBottom: '18px' }}>
+              <h4 style={{ margin: '0 0 6px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                📜 용병 등록
+              </h4>
+              <p style={{ fontSize: '13px', color: '#c9a66b', margin: '8px 0 12px' }}>
+                "처음 왔구나! 용병으로 등록하려면 먼저 전문 분야를 정해야 해. 신중하게 골라줘~"
+              </p>
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '8px'
+              }}>
+                {Object.entries(CLASS_TYPES).map(([classId, info]) => (
+                  <div
+                    key={classId}
+                    onClick={() => sceneRef.current.chooseClass(classId)}
+                    style={{
+                      padding: '10px 6px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      border: `2px solid ${THEME.borderColor}`,
+                      backgroundColor: 'rgba(255,255,255,0.06)',
+                      textAlign: 'center'
+                    }}
+                  >
+                    <div style={{ fontSize: '22px' }}>{info.icon}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 'bold', marginTop: '2px' }}>{info.name}</div>
+                    <div style={{ fontSize: '9px', color: '#a8927a', marginTop: '2px' }}>{info.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+          <h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
             🎖 용병 등급
           </h4>
 
           {(() => {
             const myRank = RANK_TIERS.find(r => r.id === playerStats.rank);
-            // order가 내 등급보다 딱 1 높은 등급을 다음 목표로 찾음
             const nextRank = RANK_TIERS.find(r => r.order === myRank.order + 1);
 
             return (
@@ -687,7 +777,7 @@ function App() {
                   {isActive && !canTurnIn && (
                     <span style={{ fontSize: '11px', color: '#a8927a', flexShrink: 0 }}>진행중</span>
                   )}
-                  {isActive && canTurnIn && (
+                                    {isActive && canTurnIn && (
                     <button onClick={() => sceneRef.current.turnInQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
                       완료
                     </button>
@@ -696,6 +786,8 @@ function App() {
               </div>
             );
           })}
+            </>
+          )}
 
           <button onClick={() => setShowTavern(false)} style={{ ...buttonStyle, marginTop: '18px', width: '100%' }}>
             나가기

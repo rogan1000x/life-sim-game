@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -13,6 +13,13 @@ export class GameScene extends Phaser.Scene {
     this.exp = 0;
     this.inventory = {};
     this.statPoints = 0;
+    this.skillPoints = 0; // 레벨업할 때마다 statPoints와 별도로 받는 포인트 - 직업 스킬 강화에만 씀
+    // 스킬별로 지금 몇 레벨인지 저장하는 곳이에요. 예: { warrior_slash_mastery: 3 }
+    // 아직 안 배운 스킬은 이 객체에 아예 없는 상태(레벨 0과 같은 의미)예요
+    this.skillLevels = {};
+    // 직업(class)이에요. App.js에서 GameScene 인스턴스를 만든 직후에 이 값을 채워줘요.
+    // (constructor 시점에는 아직 안 채워져 있을 수 있어서 일단 null로 시작)
+    this.playerClass = null;
     this.attackPower = 10;
     this.maxHp = 100;
     this.moveSpeed = 200;
@@ -183,6 +190,11 @@ export class GameScene extends Phaser.Scene {
       if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
       if (data.rank !== undefined) this.rank = data.rank;
       if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
+      // 저장된 직업이 있으면 그대로 이어받음. 없으면 null 상태 그대로 두고,
+      // 이후 주점에서 chooseClass()를 호출할 때 비로소 정해짐
+      if (data.playerClass !== undefined) this.playerClass = data.playerClass;
+      if (data.skillPoints !== undefined) this.skillPoints = data.skillPoints;
+      if (data.skillLevels !== undefined) this.skillLevels = data.skillLevels;
     }
 
     // 배경 격자무늬
@@ -490,9 +502,17 @@ export class GameScene extends Phaser.Scene {
 
         } else if (info.category === 'hostile_monster') {
           // 몬스터는 체력을 깎아야 처치됨
-          entity.hp -= this.attackPower;
+          // 직업이 도적이고 지금이 밤(nightIntensity > 0.3)이라면, CLASS_TYPES에 있는
+          // nightAttackBonus만큼 공격력에 더 얹어줌. 다른 직업은 이 필드 자체가 없어서
+          // (undefined) || 0 을 붙여 자동으로 0이 되게 처리함
+          const myClassInfo = this.playerClass ? CLASS_TYPES[this.playerClass] : null;
+          const isNightBonusActive = myClassInfo?.nightAttackBonus && this.nightIntensity > 0.3;
+          const totalAttackPower = this.attackPower + (isNightBonusActive ? myClassInfo.nightAttackBonus : 0);
+
+                    entity.hp -= totalAttackPower;
           this.playHitSound();
           this.reduceWeaponDurability(); // 때릴 때마다 지금 낀 무기의 내구도를 깎음
+          this.createAttackSlashEffect(entity.x, entity.y); // 맞은 자리에 슬래시 이펙트 표시
 
           // 동료가 있고, 지금 공격 중인 몬스터 근처(150px 이내)에 있다면 같이 데미지를 줌
           if (this.companionSprite) {
@@ -501,7 +521,10 @@ export class GameScene extends Phaser.Scene {
               this.companionSprite.x, this.companionSprite.y, entity.x, entity.y
             );
             if (companionDistance < 150) {
-              entity.hp -= companionInfo.attackBonus;
+              // 직업이 소환사면 CLASS_TYPES의 companionBonusMultiplier만큼 동료 데미지를 곱해줌
+              // 소환사가 아니면 이 필드가 없으니 그냥 1배(원래 그대로)로 처리됨
+              const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
+              entity.hp -= companionInfo.attackBonus * companionMultiplier;
             }
           }
 
@@ -657,7 +680,9 @@ export class GameScene extends Phaser.Scene {
       equipmentDurability: this.equipmentDurability,
       activeQuestIds: this.activeQuestIds,
       hiredCompanionId: this.hiredCompanionId,
-      rank: this.rank, questsCompletedCount: this.questsCompletedCount
+      rank: this.rank, questsCompletedCount: this.questsCompletedCount,
+      playerClass: this.playerClass,
+      skillPoints: this.skillPoints, skillLevels: this.skillLevels
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -1013,7 +1038,10 @@ export class GameScene extends Phaser.Scene {
         activeQuestIds: [...this.activeQuestIds],
         hiredCompanionId: this.hiredCompanionId,
         rank: this.rank,
-        questsCompletedCount: this.questsCompletedCount
+                questsCompletedCount: this.questsCompletedCount,
+        playerClass: this.playerClass,
+        skillPoints: this.skillPoints,
+        skillLevels: { ...this.skillLevels }
       });
     }
     this.saveGame();
@@ -1029,6 +1057,7 @@ export class GameScene extends Phaser.Scene {
       this.level++;
       this.hp = this.maxHp;
       this.statPoints++;
+      this.skillPoints++; // 레벨업할 때마다 스킬 포인트도 1개씩 같이 지급함
       this.hpText.setText('HP: ' + this.hp);
       this.playLevelUpSound();
       this.createParticleBurst(this.player.x, this.player.y, 0xffff00, 16);
@@ -1117,6 +1146,27 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
+  // Admin 패널의 초기화 버튼용 - 레벨/경험치/스탯포인트/직업을 전부 처음 상태로 되돌림.
+  // 골드/인벤토리/장비/퀘스트 진행도/동료 등은 건드리지 않고, "성장 관련 수치"만 리셋함
+  // (다른 직업으로 다시 테스트해보고 싶을 때 쓰기 좋아요)
+  resetProgress() {
+    this.level = 1;
+    this.exp = 0;
+    this.statPoints = 0;
+    this.playerClass = null; // 직업도 다시 null로 되돌려서, 주점에서 다시 고를 수 있게 함
+
+    // 기본 스탯(직업 선택 전 수치)으로 되돌림
+    this.attackPower = 10;
+    this.maxHp = 100;
+    this.hp = 100;
+    this.moveSpeed = 200;
+
+    if (this.hpText) this.hpText.setText('HP: ' + this.hp);
+
+    this.addLog('레벨과 직업이 초기화되었어요', 'info');
+    this.syncStatsToReact();
+  }
+
   // 무기로 몬스터를 때릴 때마다 호출되는 함수예요. 내구도를 1 깎고, 0이 되면 장비가 부서져요.
   reduceWeaponDurability() {
     const itemId = this.equipped.weapon;
@@ -1172,6 +1222,80 @@ export class GameScene extends Phaser.Scene {
     this.addLog(`${item.name} 수리 완료! (-${formatCurrency(cost)})`, 'gain');
     this.syncStatsToReact();
   }
+
+  // 주점에서 리나에게 처음 등록할 때 직업을 고르는 함수예요. 고른 즉시 그 직업의
+  // 기본 스탯(공격력/체력/이동속도)으로 지금 스탯을 덮어써요.
+  chooseClass(classId) {
+    if (this.playerClass) return; // 이미 직업이 있으면 다시 고를 수 없게 막음 (재선택은 나중에 별도 기능으로 고려)
+
+    const classInfo = CLASS_TYPES[classId];
+    if (!classInfo) return;
+
+    this.playerClass = classId;
+    this.attackPower = classInfo.attackPower;
+    this.maxHp = classInfo.maxHp;
+    this.hp = classInfo.maxHp; // 체력도 새 최대치로 꽉 채워줌
+    this.moveSpeed = classInfo.moveSpeed;
+    if (this.hpText) this.hpText.setText('HP: ' + this.hp);
+
+        this.addLog(`${classInfo.name}(으)로 용병 등록을 마쳤어요!`, 'gain');
+    this.syncStatsToReact();
+  }
+
+  // 스킬 포인트를 써서 스킬 레벨을 하나 올려요.
+  upgradeSkill(skillId) {
+    if (!this.playerClass) return; // 직업이 없으면 스킬도 없음
+    if (this.skillPoints <= 0) {
+      this.addLog('스킬 포인트가 부족해요', 'info');
+      return;
+    }
+
+    // 내 직업의 스킬 목록에서 이 skillId를 실제로 찾아봄 (다른 직업 스킬을 억지로
+    // 올리려는 시도를 막기 위한 안전장치이기도 함)
+    const mySkills = CLASS_SKILLS[this.playerClass] || [];
+    const skill = mySkills.find(s => s.id === skillId);
+    if (!skill) return;
+
+    const currentLevel = this.skillLevels[skillId] || 0; // 아직 기록이 없으면 0레벨로 취급
+    if (currentLevel >= skill.maxLevel) {
+      this.addLog('이미 최대 레벨이에요', 'info');
+      return;
+    }
+
+    this.skillPoints--;
+    this.skillLevels[skillId] = currentLevel + 1;
+
+    // 스킬 효과를 실제 스탯에 반영함 (장비 효과 적용 방식과 똑같은 패턴)
+    if (skill.effectType === 'attack') {
+      this.attackPower += skill.effectPerLevel;
+    } else if (skill.effectType === 'speed') {
+      this.moveSpeed += skill.effectPerLevel;
+    } else if (skill.effectType === 'maxHp') {
+      this.maxHp += skill.effectPerLevel;
+      this.hp += skill.effectPerLevel;
+    }
+
+    this.addLog(`${skill.name} 레벨 ${this.skillLevels[skillId]}!`, 'gain');
+    this.syncStatsToReact();
+  }
+
+  // 기본 공격이 몬스터에 맞았을 때 나오는 슬래시 이펙트예요. 처치 여부와 상관없이
+  // "때릴 때마다" 나와서, 공격이 실제로 명중했다는 느낌을 즉각적으로 줘요.
+  // (기존 createParticleBurst는 "처치했을 때"만 나오는 별개의 이펙트예요)
+  createAttackSlashEffect(x, y) {
+    // 짧은 직사각형을 하나 만들어서, 살짝 커졌다 사라지는 애니메이션을 줌 - 칼을 휘두른 잔상 느낌
+    const slash = this.add.rectangle(x, y, 30, 4, 0xffffff);
+    slash.setRotation(Phaser.Math.Between(0, 360) * (Math.PI / 180)); // 매번 랜덤한 각도로 표시해서 단조롭지 않게 함
+
+    this.tweens.add({
+      targets: slash,
+      scaleX: 2,
+      alpha: 0,
+      duration: 150, // 아주 짧게(0.15초) 나왔다 사라지게 해서 공격 리듬을 안 늦춤
+      onComplete: () => slash.destroy()
+    });
+  }
+
 
   // 주점에서 "쉬기" 버튼을 눌렀을 때 호출돼요. 지금은 무료로 체력을 완전히 회복시켜줘요.
   // (나중에 동료/등급 시스템이 생기면, 여기에 "숙박비" 같은 걸 추가할 수도 있어요)

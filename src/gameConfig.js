@@ -13,6 +13,69 @@ export function formatCurrency(totalCopper) {
   return parts.join(' ');
 }
 
+// 전투 직업 목록이에요. 게임 시작 전에 하나를 골라서 시작 스탯이 달라지게 돼요.
+// attackPower/maxHp/moveSpeed는 기본값(공격력10, 체력100, 속도200) 대신 쓸 값들이에요.
+// nightAttackBonus/companionBonusMultiplier는 있는 직업만 적용되는 특별한 보너스예요
+// (없는 직업은 그냥 undefined라서, 코드에서 없으면 무시하도록 처리할 거예요)
+export const CLASS_TYPES = {
+  warrior: {
+    name: '전사', icon: '⚔️',
+    description: '높은 체력과 공격력을 가진 근접 전투 전문가',
+    attackPower: 14, maxHp: 140, moveSpeed: 190
+  },
+  archer: {
+    name: '궁수', icon: '🏹',
+    description: '빠른 몸놀림으로 치고 빠지는 원거리 전문가',
+    attackPower: 11, maxHp: 90, moveSpeed: 230
+  },
+  mage: {
+    name: '마법사', icon: '🔮',
+    description: '압도적인 공격력이지만 체력이 약함',
+    attackPower: 18, maxHp: 70, moveSpeed: 190
+  },
+  priest: {
+    name: '성직자', icon: '🕊️',
+    description: '공격력은 낮지만 생존력이 좋은 서포터',
+    attackPower: 7, maxHp: 110, moveSpeed: 195
+  },
+  rogue: {
+    name: '도적', icon: '🗡️',
+    description: '밤이 되면 더욱 위협적으로 변하는 그림자',
+    attackPower: 12, maxHp: 85, moveSpeed: 240,
+    nightAttackBonus: 6 // 밤에는 공격력이 추가로 이만큼 더 붙음
+  },
+  summoner: {
+    name: '소환사', icon: '👻',
+    description: '동료와 함께 싸울 때 진가를 발휘함',
+    attackPower: 8, maxHp: 95, moveSpeed: 195,
+    companionBonusMultiplier: 1.6 // 동료의 전투 보너스 데미지가 이 배율만큼 커짐
+  }
+};
+// 직업별 스킬 목록이에요. 아직 스킬이 없는 직업은 빈 배열([])로 자리만 잡아뒀어요
+// (나중에 하나씩 채워나가면 됨). 각 스킬은 레벨업할 때마다 effectType 스탯이
+// effectPerLevel만큼 늘어나요. 이 구조는 나중에 장비의 부가 옵션이 스탯을 더해줄 때도
+// 그대로 재사용할 수 있게, equipment의 effectType과 같은 이름 체계를 씀
+export const CLASS_SKILLS = {
+  warrior: [
+    {
+      id: 'warrior_slash_mastery', name: '베기 숙련', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 2,
+      description: '레벨당 공격력 +2'
+    },
+    {
+      id: 'warrior_toughness', name: '불굴의 의지', maxLevel: 5,
+      effectType: 'maxHp', effectPerLevel: 15,
+      description: '레벨당 최대체력 +15'
+    }
+  ],
+  archer: [],
+  mage: [],
+  priest: [],
+  rogue: [],
+  summoner: []
+};
+
+
 // 게임 전체 설정값 모음 (나중에 옵션 화면에서 조정 가능하게 분리해둠)
 export const GAME_CONFIG = {
   treeCount: 3,
