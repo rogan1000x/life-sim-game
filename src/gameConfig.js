@@ -17,40 +17,45 @@ export function formatCurrency(totalCopper) {
 // attackPower/maxHp/moveSpeed는 기본값(공격력10, 체력100, 속도200) 대신 쓸 값들이에요.
 // nightAttackBonus/companionBonusMultiplier는 있는 직업만 적용되는 특별한 보너스예요
 // (없는 직업은 그냥 undefined라서, 코드에서 없으면 무시하도록 처리할 거예요)
+// 이제 직업은 attackPower/maxHp/moveSpeed를 직접 주지 않고, 근본 스탯(근력/활력/민첩/지능/감각)을
+// 얼마씩 갖고 시작하는지로 정의해요. 실제 공격력/체력 같은 값은 GameScene의
+// recalculateDerivedStats()가 이 근본 스탯을 보고 매번 계산해서 만들어줘요.
 export const CLASS_TYPES = {
   warrior: {
     name: '전사', icon: '⚔️',
     description: '높은 체력과 공격력을 가진 근접 전투 전문가',
-    attackPower: 14, maxHp: 140, moveSpeed: 190
+    primaryStats: { str: 10, vit: 10, agi: 2, int: 1, sen: 2 },
+    startingHp: 140 // 시작 시 체력을 꽉 채워줄 기준값 (근본 스탯으로 계산된 maxHp와 같아야 자연스러움)
   },
   archer: {
     name: '궁수', icon: '🏹',
     description: '빠른 몸놀림으로 치고 빠지는 원거리 전문가',
-    attackPower: 11, maxHp: 90, moveSpeed: 230
+    primaryStats: { str: 5, vit: 5, agi: 9, int: 2, sen: 4 }
   },
   mage: {
     name: '마법사', icon: '🔮',
     description: '압도적인 공격력이지만 체력이 약함',
-    attackPower: 18, maxHp: 70, moveSpeed: 190
+    primaryStats: { str: 2, vit: 3, agi: 3, int: 14, sen: 3 }
   },
   priest: {
     name: '성직자', icon: '🕊️',
     description: '공격력은 낮지만 생존력이 좋은 서포터',
-    attackPower: 7, maxHp: 110, moveSpeed: 195
+    primaryStats: { str: 2, vit: 10, agi: 3, int: 7, sen: 3 }
   },
   rogue: {
     name: '도적', icon: '🗡️',
     description: '밤이 되면 더욱 위협적으로 변하는 그림자',
-    attackPower: 12, maxHp: 85, moveSpeed: 240,
+    primaryStats: { str: 4, vit: 4, agi: 11, int: 2, sen: 4 },
     nightAttackBonus: 6 // 밤에는 공격력이 추가로 이만큼 더 붙음
   },
   summoner: {
     name: '소환사', icon: '👻',
     description: '동료와 함께 싸울 때 진가를 발휘함',
-    attackPower: 8, maxHp: 95, moveSpeed: 195,
+    primaryStats: { str: 3, vit: 6, agi: 3, int: 10, sen: 3 },
     companionBonusMultiplier: 1.6 // 동료의 전투 보너스 데미지가 이 배율만큼 커짐
   }
 };
+
 // 직업별 스킬 목록이에요. 아직 스킬이 없는 직업은 빈 배열([])로 자리만 잡아뒀어요
 // (나중에 하나씩 채워나가면 됨). 각 스킬은 레벨업할 때마다 effectType 스탯이
 // effectPerLevel만큼 늘어나요. 이 구조는 나중에 장비의 부가 옵션이 스탯을 더해줄 때도

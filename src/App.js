@@ -87,7 +87,9 @@ function App() {
   const [playerStats, setPlayerStats] = useState({
     level: 1, exp: 0, expNeeded: 100, hp: 100, maxHp: 100,
     statPoints: 0, attackPower: 10, moveSpeed: 200, gold: 0, inventory: {},
-    equipped: { weapon: null }, rank: 'bronze', questsCompletedCount: 0, playerClass: null
+    equipped: { weapon: null }, rank: 'bronze', questsCompletedCount: 0, playerClass: null,
+    primaryStats: { str: 0, vit: 0, agi: 0, int: 0, sen: 0 },
+    defense: 0, critChance: 0, critDamage: 150, magicPower: 0, cooldownReduction: 0, precision: 0
   });
 
   const [showAdmin, setShowAdmin] = useState(false);
@@ -167,7 +169,7 @@ function App() {
       game.destroy(true);
     };
   }, [gameStarted]);
-  
+
   // Admin 무적 모드 체크박스 값을 GameScene에 실시간 반영
   useEffect(() => {
     if (sceneRef.current) {
@@ -337,20 +339,42 @@ function App() {
           🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
         </p>
 
-                {playerStats.statPoints > 0 && (
-          <div style={{
-            marginTop: '12px', padding: '10px',
-            backgroundColor: 'rgba(255,215,106,0.12)',
-            border: `2px solid ${THEME.gold}`, borderRadius: '6px'
-          }}>
-            <p style={{ margin: '0 0 8px', color: THEME.gold }}>✨ 스탯 포인트: {playerStats.statPoints}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <button style={buttonStyle} onClick={() => sceneRef.current.allocateStat('attack')}>⚔ 공격력 +5</button>
-              <button style={buttonStyle} onClick={() => sceneRef.current.allocateStat('hp')}>❤ 체력 +20</button>
-              <button style={buttonStyle} onClick={() => sceneRef.current.allocateStat('speed')}>👟 속도 +20</button>
-            </div>
+        {/* 근본 스탯 5개는 항상 보여주고(투자한 값 확인용), 포인트가 있을 때만 +버튼이 눌리게 함 */}
+        <div style={{
+          marginTop: '12px', padding: '10px',
+          backgroundColor: 'rgba(255,215,106,0.08)',
+          border: `2px solid ${THEME.borderColor}`, borderRadius: '6px'
+        }}>
+          <p style={{ margin: '0 0 8px', color: THEME.gold }}>✨ 스탯 포인트: {playerStats.statPoints}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+            {[
+              { key: 'str', label: '근력' },
+              { key: 'vit', label: '활력' },
+              { key: 'agi', label: '민첩' },
+              { key: 'int', label: '지능' },
+              { key: 'sen', label: '감각' }
+            ].map(stat => (
+              <div key={stat.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{stat.label}: {playerStats.primaryStats?.[stat.key] || 0}</span>
+                <button
+                  onClick={() => sceneRef.current.investStat(stat.key)}
+                  disabled={playerStats.statPoints <= 0}
+                  style={{ ...buttonStyle, fontSize: '11px', padding: '2px 10px', opacity: playerStats.statPoints > 0 ? 1 : 0.4, cursor: playerStats.statPoints > 0 ? 'pointer' : 'not-allowed' }}
+                >
+                  +
+                </button>
+              </div>
+            ))}
           </div>
-        )}
+
+          {/* 파생 스탯(방어력/치명타/마력 등)도 참고용으로 보여줌 */}
+          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(201,166,107,0.3)', fontSize: '11px', color: '#c9a66b' }}>
+            <div>🛡 방어력: {playerStats.defense || 0}</div>
+            <div>💥 치명타: {playerStats.critChance || 0}% (피해 {playerStats.critDamage || 150}%)</div>
+            <div>🎯 정밀도: {playerStats.precision || 0}</div>
+            <div>🔮 마력: {playerStats.magicPower || 0} · ⏱ 재사용감소: {playerStats.cooldownReduction || 0}%</div>
+          </div>
+        </div>
 
         {/* 직업이 없으면 스킬 자체가 없다는 안내만 보여줌 */}
         {!playerStats.playerClass ? (
@@ -486,7 +510,7 @@ function App() {
             />
             {' '}무적 모드
           </label>
-                    <button onClick={() => sceneRef.current.revivePlayer()} style={{ ...buttonStyle, marginBottom: '10px', width: '100%' }}>
+          <button onClick={() => sceneRef.current.revivePlayer()} style={{ ...buttonStyle, marginBottom: '10px', width: '100%' }}>
             부활 (HP 회복)
           </button>
           <button
@@ -629,7 +653,7 @@ function App() {
               </div>
             );
           })}
-                    {/* 직업이 아직 없으면(playerClass가 null이면), 등급/퀘스트 대신 직업 등록 화면을 보여줌 */}
+          {/* 직업이 아직 없으면(playerClass가 null이면), 등급/퀘스트 대신 직업 등록 화면을 보여줌 */}
           {!playerStats.playerClass ? (
             <div style={{ marginBottom: '18px' }}>
               <h4 style={{ margin: '0 0 6px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
@@ -666,126 +690,126 @@ function App() {
             </div>
           ) : (
             <>
-          <h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
-            🎖 용병 등급
-          </h4>
+              <h4 style={{ margin: '0 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                🎖 용병 등급
+              </h4>
 
-          {(() => {
-            const myRank = RANK_TIERS.find(r => r.id === playerStats.rank);
-            const nextRank = RANK_TIERS.find(r => r.order === myRank.order + 1);
+              {(() => {
+                const myRank = RANK_TIERS.find(r => r.id === playerStats.rank);
+                const nextRank = RANK_TIERS.find(r => r.order === myRank.order + 1);
 
-            return (
-              <div style={{ marginBottom: '18px' }}>
-                <p style={{ margin: '0 0 6px' }}>현재 등급: <span style={{ color: THEME.gold }}>{myRank.name}</span></p>
+                return (
+                  <div style={{ marginBottom: '18px' }}>
+                    <p style={{ margin: '0 0 6px' }}>현재 등급: <span style={{ color: THEME.gold }}>{myRank.name}</span></p>
 
-                {!nextRank ? (
-                  <p style={{ fontSize: '12px', color: '#a8927a' }}>이미 최고 등급이에요</p>
-                ) : (
-                  <>
-                    <p style={{ fontSize: '12px', color: '#c9a66b', margin: '0 0 8px' }}>
-                      {nextRank.name} 승급 조건: 레벨 {playerStats.level}/{nextRank.requiredLevel}
-                      {' · '}완료 의뢰 {playerStats.questsCompletedCount}/{nextRank.requiredQuests}
-                      {' · '}시험비 {formatCurrency(nextRank.examFee)}
-                    </p>
-                    <button
-                      onClick={() => sceneRef.current.takeExam()}
-                      style={{ ...buttonStyle, width: '100%' }}
-                    >
-                      리나에게 승급 시험 보기
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })()}
+                    {!nextRank ? (
+                      <p style={{ fontSize: '12px', color: '#a8927a' }}>이미 최고 등급이에요</p>
+                    ) : (
+                      <>
+                        <p style={{ fontSize: '12px', color: '#c9a66b', margin: '0 0 8px' }}>
+                          {nextRank.name} 승급 조건: 레벨 {playerStats.level}/{nextRank.requiredLevel}
+                          {' · '}완료 의뢰 {playerStats.questsCompletedCount}/{nextRank.requiredQuests}
+                          {' · '}시험비 {formatCurrency(nextRank.examFee)}
+                        </p>
+                        <button
+                          onClick={() => sceneRef.current.takeExam()}
+                          style={{ ...buttonStyle, width: '100%' }}
+                        >
+                          리나에게 승급 시험 보기
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
-          <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
-            🤝 동료
-          </h4>
+              <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                🤝 동료
+              </h4>
 
-          {/* 이미 동료가 있으면 그 정보와 해고 버튼을, 없으면 고용 가능한 목록을 보여줌 */}
-          {playerStats.hiredCompanionId ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <span>현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}</span>
-              <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
-                해고
-              </button>
-            </div>
-          ) : (
-            // Object.entries()는 객체를 [키, 값] 쌍의 배열로 바꿔줘요. COMPANION_TYPES는
-            // 배열이 아니라 객체라서, map을 쓰려면 이렇게 먼저 배열 형태로 바꿔줘야 해요.
-            Object.entries(COMPANION_TYPES).map(([companionId, info]) => {
-              const canAfford = playerStats.gold >= info.hireCost;
-              return (
-                <div key={companionId} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
-                }}>
-                  <span>{info.name} · {info.description}</span>
-                  <button
-                    onClick={() => sceneRef.current.hireCompanion(companionId)}
-                    disabled={!canAfford}
-                    style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
-                  >
-                    고용 {formatCurrency(info.hireCost)}
+              {/* 이미 동료가 있으면 그 정보와 해고 버튼을, 없으면 고용 가능한 목록을 보여줌 */}
+              {playerStats.hiredCompanionId ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <span>현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}</span>
+                  <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                    해고
                   </button>
                 </div>
-              );
-            })
-          )}
+              ) : (
+                // Object.entries()는 객체를 [키, 값] 쌍의 배열로 바꿔줘요. COMPANION_TYPES는
+                // 배열이 아니라 객체라서, map을 쓰려면 이렇게 먼저 배열 형태로 바꿔줘야 해요.
+                Object.entries(COMPANION_TYPES).map(([companionId, info]) => {
+                  const canAfford = playerStats.gold >= info.hireCost;
+                  return (
+                    <div key={companionId} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
+                    }}>
+                      <span>{info.name} · {info.description}</span>
+                      <button
+                        onClick={() => sceneRef.current.hireCompanion(companionId)}
+                        disabled={!canAfford}
+                        style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
+                      >
+                        고용 {formatCurrency(info.hireCost)}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
 
-          <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
-            📋 퀘스트 게시판
-          </h4>
+              <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                📋 퀘스트 게시판
+              </h4>
 
-          {QUEST_TEMPLATES.map(quest => {
-            // 이 퀘스트를 지금 수락한 상태인지 확인 (playerStats.activeQuestIds가 아직 안 왔을 수도 있어서 ?. 와 [] 로 안전하게 처리)
-            const isActive = (playerStats.activeQuestIds || []).includes(quest.id);
-            const currentCount = playerStats.inventory[quest.targetId] || 0;
-            const canTurnIn = isActive && currentCount >= quest.targetCount;
+              {QUEST_TEMPLATES.map(quest => {
+                // 이 퀘스트를 지금 수락한 상태인지 확인 (playerStats.activeQuestIds가 아직 안 왔을 수도 있어서 ?. 와 [] 로 안전하게 처리)
+                const isActive = (playerStats.activeQuestIds || []).includes(quest.id);
+                const currentCount = playerStats.inventory[quest.targetId] || 0;
+                const canTurnIn = isActive && currentCount >= quest.targetCount;
 
-            // 내 등급이 이 퀘스트가 요구하는 등급보다 낮으면 잠긴 상태예요
-            const myRankOrder = RANK_TIERS.find(r => r.id === playerStats.rank)?.order ?? 0;
-            const requiredRankOrder = RANK_TIERS.find(r => r.id === quest.minRank)?.order ?? 0;
-            const isLocked = myRankOrder < requiredRankOrder;
+                // 내 등급이 이 퀘스트가 요구하는 등급보다 낮으면 잠긴 상태예요
+                const myRankOrder = RANK_TIERS.find(r => r.id === playerStats.rank)?.order ?? 0;
+                const requiredRankOrder = RANK_TIERS.find(r => r.id === quest.minRank)?.order ?? 0;
+                const isLocked = myRankOrder < requiredRankOrder;
 
-            return (
-              <div key={quest.id} style={{
-                marginTop: '10px', paddingBottom: '10px',
-                borderBottom: '1px solid rgba(201,166,107,0.3)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ color: THEME.gold, fontSize: '13px' }}>{quest.name}</div>
-                    <div style={{ fontSize: '11px', color: '#a8927a', marginTop: '2px' }}>{quest.description}</div>
-                    <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '2px' }}>
-                      {getItemDisplayName(quest.targetId)} {currentCount}/{quest.targetCount}
-                      {' · '}보상 {formatCurrency(quest.rewardGold)} + EXP {quest.rewardExp}
+                return (
+                  <div key={quest.id} style={{
+                    marginTop: '10px', paddingBottom: '10px',
+                    borderBottom: '1px solid rgba(201,166,107,0.3)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ color: THEME.gold, fontSize: '13px' }}>{quest.name}</div>
+                        <div style={{ fontSize: '11px', color: '#a8927a', marginTop: '2px' }}>{quest.description}</div>
+                        <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '2px' }}>
+                          {getItemDisplayName(quest.targetId)} {currentCount}/{quest.targetCount}
+                          {' · '}보상 {formatCurrency(quest.rewardGold)} + EXP {quest.rewardExp}
+                        </div>
+                      </div>
+
+                      {/* 네 가지 상태에 따라 버튼이 달라짐: 등급 부족 -> 잠김 / 안 받음 -> 수락 / 받았지만 조건 부족 -> 진행중 표시 / 조건 만족 -> 완료 */}
+                      {isLocked && (
+                        <span style={{ fontSize: '11px', color: THEME.red, flexShrink: 0 }}>
+                          🔒 {RANK_TIERS.find(r => r.id === quest.minRank)?.name} 이상
+                        </span>
+                      )}
+                      {!isLocked && !isActive && (
+                        <button onClick={() => sceneRef.current.acceptQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
+                          수락
+                        </button>
+                      )}
+                      {isActive && !canTurnIn && (
+                        <span style={{ fontSize: '11px', color: '#a8927a', flexShrink: 0 }}>진행중</span>
+                      )}
+                      {isActive && canTurnIn && (
+                        <button onClick={() => sceneRef.current.turnInQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
+                          완료
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  {/* 네 가지 상태에 따라 버튼이 달라짐: 등급 부족 -> 잠김 / 안 받음 -> 수락 / 받았지만 조건 부족 -> 진행중 표시 / 조건 만족 -> 완료 */}
-                  {isLocked && (
-                    <span style={{ fontSize: '11px', color: THEME.red, flexShrink: 0 }}>
-                      🔒 {RANK_TIERS.find(r => r.id === quest.minRank)?.name} 이상
-                    </span>
-                  )}
-                  {!isLocked && !isActive && (
-                    <button onClick={() => sceneRef.current.acceptQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
-                      수락
-                    </button>
-                  )}
-                  {isActive && !canTurnIn && (
-                    <span style={{ fontSize: '11px', color: '#a8927a', flexShrink: 0 }}>진행중</span>
-                  )}
-                                    {isActive && canTurnIn && (
-                    <button onClick={() => sceneRef.current.turnInQuest(quest.id)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', flexShrink: 0 }}>
-                      완료
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
             </>
           )}
 
