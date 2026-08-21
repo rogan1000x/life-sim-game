@@ -60,17 +60,41 @@ export const CLASS_TYPES = {
 // (나중에 하나씩 채워나가면 됨). 각 스킬은 레벨업할 때마다 effectType 스탯이
 // effectPerLevel만큼 늘어나요. 이 구조는 나중에 장비의 부가 옵션이 스탯을 더해줄 때도
 // 그대로 재사용할 수 있게, equipment의 effectType과 같은 이름 체계를 씀
+// 각 스킬의 unlockCondition으로 해금 조건을 정의해요.
+// { type: 'always' } - 처음부터 배울 수 있음
+// { type: 'level', value: N } - 캐릭터 레벨이 N 이상이어야 함
+// { type: 'kills', value: N } - 몬스터를 총 N마리 이상 처치해야 함 (전투 중 자연스럽게 해금됨)
 export const CLASS_SKILLS = {
   warrior: [
     {
       id: 'warrior_slash_mastery', name: '베기 숙련', maxLevel: 5,
       effectType: 'attack', effectPerLevel: 2,
+      unlockCondition: { type: 'always' },
       description: '레벨당 공격력 +2'
     },
     {
       id: 'warrior_toughness', name: '불굴의 의지', maxLevel: 5,
       effectType: 'maxHp', effectPerLevel: 15,
+      unlockCondition: { type: 'always' },
       description: '레벨당 최대체력 +15'
+    },
+    {
+      id: 'warrior_iron_wall', name: '철벽 방어', maxLevel: 5,
+      effectType: 'defense', effectPerLevel: 2,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 방어력 +2'
+    },
+    {
+      id: 'warrior_berserk', name: '광전사의 분노', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 3,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 공격력 +3 (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'warrior_critical_moment', name: '결정의 순간', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1.5,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 치명타 확률 +1.5%'
     }
   ],
   archer: [],

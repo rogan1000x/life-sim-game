@@ -7,7 +7,7 @@ import Phaser from 'phaser';
 // Line: 실제로 그려지는 선 하나 (데이터 하나당 선 하나)
 // XAxis/YAxis: 가로축/세로축
 // ResponsiveContainer: 부모 크기에 맞춰 그래프 크기를 자동으로 조절해주는 도구
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 
 // 퀘스트의 targetId(예: 'tree', 'wolf')로 실제 사람이 읽을 이름('나무', '늑대 가죽')을 찾아줘요.
 // targetId가 SHOP_ITEMS에 있을 수도, ENTITY_TYPES에 있을 수도 있어서 둘 다 확인함
@@ -92,7 +92,9 @@ function App() {
     defense: 0, critChance: 0, critDamage: 150, magicPower: 0, cooldownReduction: 0, precision: 0
   });
 
-  const [showAdmin, setShowAdmin] = useState(false);
+    const [showAdmin, setShowAdmin] = useState(false);
+  // I키로 여닫는 캐릭터/인벤토리 패널이에요. 평소엔 닫혀있다가, I키를 누르면 열림
+  const [showCharacterPanel, setShowCharacterPanel] = useState(false);
   const [godMode, setGodMode] = useState(false);
   const [dialogue, setDialogue] = useState(null);
   const [gameStarted, setGameStarted] = useState(false);
@@ -177,11 +179,14 @@ function App() {
     }
   }, [godMode]);
 
-  // 'P' 키로 Admin 패널 토글 (Phaser와 무관하게 항상 감지)
+  // 'P' 키로 Admin 패널, 'I' 키로 캐릭터/인벤토리 패널을 토글함 (Phaser와 무관하게 항상 감지)
   useEffect(() => {
     function handleKeyPress(e) {
       if (e.key === 'p' || e.key === 'P') {
         setShowAdmin(prev => !prev);
+      }
+      if (e.key === 'i' || e.key === 'I') {
+        setShowCharacterPanel(prev => !prev);
       }
     }
 
@@ -316,175 +321,227 @@ function App() {
         </div>
       </div>
 
-      <div style={{
-        ...panelStyle,
-        width: '250px',
-        padding: '20px',
-        flexShrink: 0
-      }}>
-        <h3 style={{ margin: '0 0 12px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '8px' }}>
-          🧑‍🌾 캐릭터 정보
-        </h3>
-        <p>레벨: {playerStats.level}</p>
-        <p>EXP: {playerStats.exp} / {playerStats.expNeeded}</p>
-        <p style={{ color: THEME.red }}>❤ HP: {playerStats.hp} / {playerStats.maxHp}</p>
-        <p>⚔ 공격력: {playerStats.attackPower}</p>
-        <p>👟 이동속도: {playerStats.moveSpeed}</p>
-        <p style={{ color: THEME.gold }}>💰 {formatCurrency(playerStats.gold)}</p>
-        <p>🎖 등급: {RANK_TIERS.find(r => r.id === playerStats.rank)?.name}</p>
-        <p>
-          {CLASS_TYPES[playerStats.playerClass]?.icon} 직업: {CLASS_TYPES[playerStats.playerClass]?.name || '미지정'}
-        </p>
-        <p>
-          🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
-        </p>
-
-        {/* 근본 스탯 5개는 항상 보여주고(투자한 값 확인용), 포인트가 있을 때만 +버튼이 눌리게 함 */}
+      {/* showCharacterPanel이 true일 때만 화면 위에 겹쳐서 보이는 패널이에요.
+          기존처럼 항상 화면 옆에 자리를 차지하지 않고, 필요할 때만 화면을 덮어서 보여줌 */}
+      {showCharacterPanel && (
         <div style={{
-          marginTop: '12px', padding: '10px',
-          backgroundColor: 'rgba(255,215,106,0.08)',
-          border: `2px solid ${THEME.borderColor}`, borderRadius: '6px'
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          width: '280px',
+          maxHeight: '90vh', // 화면 높이의 90%를 넘지 않게 해서, 내용이 길어지면 안에서 스크롤되게 함
+          overflowY: 'auto',
+          ...panelStyle,
+          padding: '20px',
+          zIndex: 1500
         }}>
-          <p style={{ margin: '0 0 8px', color: THEME.gold }}>✨ 스탯 포인트: {playerStats.statPoints}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-            {[
-              { key: 'str', label: '근력' },
-              { key: 'vit', label: '활력' },
-              { key: 'agi', label: '민첩' },
-              { key: 'int', label: '지능' },
-              { key: 'sen', label: '감각' }
-            ].map(stat => (
-              <div key={stat.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>{stat.label}: {playerStats.primaryStats?.[stat.key] || 0}</span>
-                <button
-                  onClick={() => sceneRef.current.investStat(stat.key)}
-                  disabled={playerStats.statPoints <= 0}
-                  style={{ ...buttonStyle, fontSize: '11px', padding: '2px 10px', opacity: playerStats.statPoints > 0 ? 1 : 0.4, cursor: playerStats.statPoints > 0 ? 'pointer' : 'not-allowed' }}
-                >
-                  +
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* 파생 스탯(방어력/치명타/마력 등)도 참고용으로 보여줌 */}
-          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(201,166,107,0.3)', fontSize: '11px', color: '#c9a66b' }}>
-            <div>🛡 방어력: {playerStats.defense || 0}</div>
-            <div>💥 치명타: {playerStats.critChance || 0}% (피해 {playerStats.critDamage || 150}%)</div>
-            <div>🎯 정밀도: {playerStats.precision || 0}</div>
-            <div>🔮 마력: {playerStats.magicPower || 0} · ⏱ 재사용감소: {playerStats.cooldownReduction || 0}%</div>
-          </div>
-        </div>
-
-        {/* 직업이 없으면 스킬 자체가 없다는 안내만 보여줌 */}
-        {!playerStats.playerClass ? (
-          <p style={{ marginTop: '12px', fontSize: '12px', color: '#a8927a', fontStyle: 'italic' }}>
-            주점에서 직업을 정하면 전용 스킬을 배울 수 있어요
+          <h3 style={{ margin: '0 0 12px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '8px' }}>
+            🧑‍🌾 캐릭터 정보
+          </h3>
+          <p>레벨: {playerStats.level}</p>
+          <p>EXP: {playerStats.exp} / {playerStats.expNeeded}</p>
+          <p style={{ color: THEME.red }}>❤ HP: {playerStats.hp} / {playerStats.maxHp}</p>
+          <p>⚔ 공격력: {playerStats.attackPower}</p>
+          <p>👟 이동속도: {playerStats.moveSpeed}</p>
+          <p style={{ color: THEME.gold }}>💰 {formatCurrency(playerStats.gold)}</p>
+          <p>🎖 등급: {RANK_TIERS.find(r => r.id === playerStats.rank)?.name}</p>
+          <p>
+            {CLASS_TYPES[playerStats.playerClass]?.icon} 직업: {CLASS_TYPES[playerStats.playerClass]?.name || '미지정'}
           </p>
-        ) : (
-          <div style={{ marginTop: '12px' }}>
-            <p style={{ margin: '0 0 8px', color: THEME.gold }}>
-              📖 스킬 포인트: {playerStats.skillPoints || 0}
-            </p>
-            {/* 내 직업의 스킬 목록만 CLASS_SKILLS에서 꺼내서 하나씩 보여줌 */}
-            {(CLASS_SKILLS[playerStats.playerClass] || []).map(skill => {
-              const currentLevel = playerStats.skillLevels?.[skill.id] || 0;
-              const isMaxed = currentLevel >= skill.maxLevel;
-              const canUpgrade = (playerStats.skillPoints || 0) > 0 && !isMaxed;
+          <p>
+            🗡 장착 무기: {getEquippedWeaponLabel(playerStats)}
+          </p>
+
+          <div style={{
+            marginTop: '12px', padding: '10px',
+            backgroundColor: 'rgba(255,215,106,0.08)',
+            border: `2px solid ${THEME.borderColor}`, borderRadius: '6px'
+          }}>
+            <p style={{ margin: '0 0 4px', color: THEME.gold }}>✨ 스탯 포인트: {playerStats.statPoints}</p>
+
+            {/* 근본 스탯 5개를 다이아몬드(오각형) 모양의 레이더 차트로 보여줌 */}
+            {(() => {
+              // recharts의 RadarChart는 [{축이름, 값}, ...] 형태의 배열을 원해요.
+              const statRadarData = [
+                { stat: '근력', value: playerStats.primaryStats?.str || 0 },
+                { stat: '활력', value: playerStats.primaryStats?.vit || 0 },
+                { stat: '민첩', value: playerStats.primaryStats?.agi || 0 },
+                { stat: '지능', value: playerStats.primaryStats?.int || 0 },
+                { stat: '감각', value: playerStats.primaryStats?.sen || 0 }
+              ];
+              // 스탯이 계속 늘어나므로, 축의 최대 범위(domain)도 값에 맞춰 자동으로 커지게 함
+              // (그래야 스탯을 아무리 많이 찍어도 차트 밖으로 안 삐져나감)
+              const maxValue = Math.max(10, ...statRadarData.map(d => d.value)) + 2;
 
               return (
-                <div key={skill.id} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  marginBottom: '6px', padding: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px'
-                }}>
-                  <span style={{ fontSize: '12px' }}>
-                    {skill.name} Lv.{currentLevel}/{skill.maxLevel}<br />
-                    <span style={{ fontSize: '10px', color: '#a8927a' }}>{skill.description}</span>
-                  </span>
+                <ResponsiveContainer width="100%" height={180}>
+                  <RadarChart data={statRadarData} outerRadius="70%">
+                    <PolarGrid stroke={THEME.borderColor} />
+                    <PolarAngleAxis dataKey="stat" tick={{ fill: THEME.text, fontSize: 11 }} />
+                    {/* tick={false}로 눈금 숫자는 숨기고, 오각형 모양 자체로만 크기를 보여줌 */}
+                    <PolarRadiusAxis angle={90} domain={[0, maxValue]} tick={false} axisLine={false} />
+                    <Radar dataKey="value" stroke={THEME.gold} fill={THEME.gold} fillOpacity={0.35} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              );
+            })()}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+              {[
+                { key: 'str', label: '근력' },
+                { key: 'vit', label: '활력' },
+                { key: 'agi', label: '민첩' },
+                { key: 'int', label: '지능' },
+                { key: 'sen', label: '감각' }
+              ].map(stat => (
+                <div key={stat.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{stat.label}: {playerStats.primaryStats?.[stat.key] || 0}</span>
                   <button
-                    onClick={() => sceneRef.current.upgradeSkill(skill.id)}
-                    disabled={!canUpgrade}
-                    style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px', opacity: canUpgrade ? 1 : 0.4, cursor: canUpgrade ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+                    onClick={() => sceneRef.current.investStat(stat.key)}
+                    disabled={playerStats.statPoints <= 0}
+                    style={{ ...buttonStyle, fontSize: '11px', padding: '2px 10px', opacity: playerStats.statPoints > 0 ? 1 : 0.4, cursor: playerStats.statPoints > 0 ? 'pointer' : 'not-allowed' }}
                   >
-                    {isMaxed ? '최대' : '+'}
+                    +
                   </button>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+
+            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(201,166,107,0.3)', fontSize: '11px', color: '#c9a66b' }}>
+              <div>🛡 방어력: {playerStats.defense || 0}</div>
+              <div>💥 치명타: {playerStats.critChance || 0}% (피해 {playerStats.critDamage || 150}%)</div>
+              <div>🎯 정밀도: {playerStats.precision || 0}</div>
+              <div>🔮 마력: {playerStats.magicPower || 0} · ⏱ 재사용감소: {playerStats.cooldownReduction || 0}%</div>
+            </div>
           </div>
-        )}
 
-        <h4 style={{ margin: '16px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
-          🎒 인벤토리
-        </h4>
-        {Object.keys(playerStats.inventory).length === 0 ? (
-          <p style={{ color: '#a8927a', fontStyle: 'italic' }}>비어있음</p>
-        ) : (
-          Object.keys(playerStats.inventory).map(key => {
-            const shopItem = SHOP_ITEMS.find(i => i.id === key);
-            const displayName = shopItem ? shopItem.name : ENTITY_TYPES[key].name;
-            const isEquipped = shopItem && shopItem.category === 'equipment' && playerStats.equipped?.[shopItem.slot] === key;
+          {!playerStats.playerClass ? (
+            <p style={{ marginTop: '12px', fontSize: '12px', color: '#a8927a', fontStyle: 'italic' }}>
+              주점에서 직업을 정하면 전용 스킬을 배울 수 있어요
+            </p>
+          ) : (
+            <div style={{ marginTop: '12px' }}>
+              <p style={{ margin: '0 0 8px', color: THEME.gold }}>
+                📖 스킬 포인트: {playerStats.skillPoints || 0}
+              </p>
+              {(CLASS_SKILLS[playerStats.playerClass] || []).map(skill => {
+                const currentLevel = playerStats.skillLevels?.[skill.id] || 0;
+                const isMaxed = currentLevel >= skill.maxLevel;
 
-            return (
-              <div key={key} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                marginBottom: '6px', padding: '4px 6px',
-                backgroundColor: isEquipped ? 'rgba(255,215,106,0.15)' : 'rgba(255,255,255,0.05)',
-                border: isEquipped ? `1px solid ${THEME.gold}` : '1px solid transparent',
-                borderRadius: '4px'
-              }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {shopItem && shopItem.icon && (
-                    <img src={`/assets/shop/${shopItem.icon}`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
-                  )}
-                  {displayName}: {playerStats.inventory[key]}
-                  {/* isEquipped가 true일 때만 아래 문구가 보여요 (조건부 렌더링, 이전에도 몇 번 나온 패턴이에요) */}
-                  {isEquipped && ` (장착 중, 내구도 ${playerStats.equipmentDurability?.[key] ?? 0}/${shopItem.maxDurability})`}
-                </span>
-                {shopItem && shopItem.category === 'consumable' && (
-                  <button
-                    onClick={(e) => sceneRef.current.useItem(key, e.shiftKey ? 10 : 1)}
-                    style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
-                    title="Shift+클릭: 10개 사용"
-                  >
-                    사용
-                  </button>
-                )}
-                {shopItem && shopItem.category === 'equipment' && (
-                  <div style={{ display: 'flex', gap: '4px' }}>
+                // 해금 조건 확인 - GameScene의 isSkillUnlocked와 같은 로직을 여기서도 계산함
+                const condition = skill.unlockCondition;
+                let isUnlocked = true;
+                let unlockText = '';
+                if (condition?.type === 'level') {
+                  isUnlocked = playerStats.level >= condition.value;
+                  unlockText = `레벨 ${condition.value} 필요`;
+                } else if (condition?.type === 'kills') {
+                  isUnlocked = (playerStats.totalMonsterKills || 0) >= condition.value;
+                  unlockText = `몬스터 ${condition.value}마리 처치 필요 (현재 ${playerStats.totalMonsterKills || 0})`;
+                }
+
+                const canUpgrade = isUnlocked && (playerStats.skillPoints || 0) > 0 && !isMaxed;
+
+                return (
+                  <div key={skill.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    marginBottom: '6px', padding: '6px',
+                    backgroundColor: isUnlocked ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.3)',
+                    borderRadius: '4px',
+                    opacity: isUnlocked ? 1 : 0.6
+                  }}>
+                    <span style={{ fontSize: '12px' }}>
+                      {isUnlocked ? skill.name : `🔒 ${skill.name}`} Lv.{currentLevel}/{skill.maxLevel}<br />
+                      <span style={{ fontSize: '10px', color: '#a8927a' }}>
+                        {isUnlocked ? skill.description : unlockText}
+                      </span>
+                    </span>
                     <button
-                      onClick={() => isEquipped ? sceneRef.current.unequipItem(shopItem.slot) : sceneRef.current.equipItem(key)}
-                      style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                      onClick={() => sceneRef.current.upgradeSkill(skill.id)}
+                      disabled={!canUpgrade}
+                      style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px', opacity: canUpgrade ? 1 : 0.4, cursor: canUpgrade ? 'pointer' : 'not-allowed', flexShrink: 0 }}
                     >
-                      {isEquipped ? '해제' : '장착'}
+                      {isMaxed ? '최대' : '+'}
                     </button>
-                    {/* 내구도 기록이 있고(한 번이라도 착용한 적 있고), 최대치보다 낮을 때만 수리 버튼을 보여줌 */}
-                    {(() => {
-                      const durability = playerStats.equipmentDurability?.[key];
-                      const needsRepair = durability !== undefined && durability < shopItem.maxDurability;
-                      if (!needsRepair) return null;
-
-                      // 수리비를 미리 계산해서 버튼에 보여줌 (GameScene의 repairItem 계산 공식과 동일하게 맞춤)
-                      const missing = shopItem.maxDurability - durability;
-                      const repairCost = Math.max(1, Math.round(shopItem.basePrice * 0.5 * (missing / shopItem.maxDurability)));
-
-                      return (
-                        <button
-                          onClick={() => sceneRef.current.repairItem(key)}
-                          style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
-                          title="수리하면 내구도가 최대치로 회복돼요"
-                        >
-                          🔧 {formatCurrency(repairCost)}
-                        </button>
-                      );
-                    })()}
                   </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+
+          <h4 style={{ margin: '16px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            🎒 인벤토리
+          </h4>
+          {Object.keys(playerStats.inventory).length === 0 ? (
+            <p style={{ color: '#a8927a', fontStyle: 'italic' }}>비어있음</p>
+          ) : (
+            Object.keys(playerStats.inventory).map(key => {
+              const shopItem = SHOP_ITEMS.find(i => i.id === key);
+              const displayName = shopItem ? shopItem.name : ENTITY_TYPES[key].name;
+              const isEquipped = shopItem && shopItem.category === 'equipment' && playerStats.equipped?.[shopItem.slot] === key;
+
+              return (
+                <div key={key} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  marginBottom: '6px', padding: '4px 6px',
+                  backgroundColor: isEquipped ? 'rgba(255,215,106,0.15)' : 'rgba(255,255,255,0.05)',
+                  border: isEquipped ? `1px solid ${THEME.gold}` : '1px solid transparent',
+                  borderRadius: '4px'
+                }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {shopItem && shopItem.icon && (
+                      <img src={`/assets/shop/${shopItem.icon}`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
+                    )}
+                    {displayName}: {playerStats.inventory[key]}
+                    {isEquipped && ` (장착 중, 내구도 ${playerStats.equipmentDurability?.[key] ?? 0}/${shopItem.maxDurability})`}
+                  </span>
+                  {shopItem && shopItem.category === 'consumable' && (
+                    <button
+                      onClick={(e) => sceneRef.current.useItem(key, e.shiftKey ? 10 : 1)}
+                      style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                      title="Shift+클릭: 10개 사용"
+                    >
+                      사용
+                    </button>
+                  )}
+                  {shopItem && shopItem.category === 'equipment' && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        onClick={() => isEquipped ? sceneRef.current.unequipItem(shopItem.slot) : sceneRef.current.equipItem(key)}
+                        style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                      >
+                        {isEquipped ? '해제' : '장착'}
+                      </button>
+                      {(() => {
+                        const durability = playerStats.equipmentDurability?.[key];
+                        const needsRepair = durability !== undefined && durability < shopItem.maxDurability;
+                        if (!needsRepair) return null;
+
+                        const missing = shopItem.maxDurability - durability;
+                        const repairCost = Math.max(1, Math.round(shopItem.basePrice * 0.5 * (missing / shopItem.maxDurability)));
+
+                        return (
+                          <button
+                            onClick={() => sceneRef.current.repairItem(key)}
+                            style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                            title="수리하면 내구도가 최대치로 회복돼요"
+                          >
+                            🔧 {formatCurrency(repairCost)}
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+
+          <p style={{ fontSize: '11px', color: '#a87878', marginTop: '14px', textAlign: 'center' }}>
+            'I' 키로 패널 열기/닫기
+          </p>
+        </div>
+      )}
 
       {showAdmin && (
         <div style={{

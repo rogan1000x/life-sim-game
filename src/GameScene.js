@@ -19,13 +19,17 @@ export class GameScene extends Phaser.Scene {
     this.skillLevels = {};
     // 직업(class)이에요. App.js에서 GameScene 인스턴스를 만든 직후에 이 값을 채워줘요.
     // (constructor 시점에는 아직 안 채워져 있을 수 있어서 일단 null로 시작)
-        this.playerClass = null;
+    this.playerClass = null;
 
     // 근본 스탯 5종이에요. 다 0에서 시작하고, statPoints로 하나씩 투자해서 올려요.
     this.primaryStats = { str: 0, vit: 0, agi: 0, int: 0, sen: 0 };
 
     // 장비/스킬이 주는 "고정 보너스"만 따로 모아두는 곳이에요.
-    this.bonusStats = { attack: 0, speed: 0, maxHp: 0 };
+    // defense/critChance도 추가해서, 스킬이 방어력/치명타에도 보너스를 줄 수 있게 함
+    this.bonusStats = { attack: 0, speed: 0, maxHp: 0, defense: 0, critChance: 0 };
+
+    // 지금까지 처치한 몬스터 총 마릿수예요. "전투 중 해금되는 스킬"의 조건으로 쓰여요.
+    this.totalMonsterKills = 0;
 
     this.attackPower = 10;
     this.maxHp = 100;
@@ -210,6 +214,7 @@ export class GameScene extends Phaser.Scene {
       if (data.skillLevels !== undefined) this.skillLevels = data.skillLevels;
       if (data.primaryStats !== undefined) this.primaryStats = data.primaryStats;
       if (data.bonusStats !== undefined) this.bonusStats = data.bonusStats;
+      if (data.totalMonsterKills !== undefined) this.totalMonsterKills = data.totalMonsterKills;
     }
 
     // 저장 데이터가 있든 없든, 마지막엔 항상 한 번 재계산해서 attackPower 등 최종 값을 맞춰둠
@@ -569,6 +574,11 @@ export class GameScene extends Phaser.Scene {
 
             this.addToInventory(entity.entityType);
             this.gainExp(info.exp);
+            this.totalMonsterKills++; // 전투 해금 스킬의 조건으로 쓰이는 누적 처치 수
+
+            // 이번 처치로 새로 해금된 스킬이 있으면 알려줌 (예: 광전사의 분노가 지금 막 열렸을 때)
+            this.checkNewlyUnlockedSkills();
+
             this.addLog(`${info.name} 처치! (+${info.exp} EXP, 상인에게 팔 수 있어요)`, 'kill');
 
             this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
@@ -717,7 +727,8 @@ export class GameScene extends Phaser.Scene {
       rank: this.rank, questsCompletedCount: this.questsCompletedCount,
       playerClass: this.playerClass,
       skillPoints: this.skillPoints, skillLevels: this.skillLevels,
-      primaryStats: this.primaryStats, bonusStats: this.bonusStats
+      primaryStats: this.primaryStats, bonusStats: this.bonusStats,
+      totalMonsterKills: this.totalMonsterKills
     };
     localStorage.setItem('lifeSimSave', JSON.stringify(saveData));
   }
@@ -1083,7 +1094,8 @@ export class GameScene extends Phaser.Scene {
         critDamage: this.critDamage,
         magicPower: this.magicPower,
         cooldownReduction: this.cooldownReduction,
-        precision: this.precision
+        precision: this.precision,
+        totalMonsterKills: this.totalMonsterKills
       });
     }
     this.saveGame();
@@ -1101,6 +1113,16 @@ export class GameScene extends Phaser.Scene {
       this.statPoints++;
       this.skillPoints++; // 레벨업할 때마다 스킬 포인트도 1개씩 같이 지급함
       this.hpText.setText('HP: ' + this.hp);
+
+      // 레벨업으로 새로 해금된 스킬이 있으면 알려줌 (예: 3레벨 찍는 순간 철벽 방어가 열렸을 때)
+      if (this.playerClass) {
+        const mySkills = CLASS_SKILLS[this.playerClass] || [];
+        mySkills.forEach(skill => {
+          if (skill.unlockCondition?.type === 'level' && this.level === skill.unlockCondition.value) {
+            this.addLog(`새 스킬 해금: ${skill.name}!`, 'gain');
+          }
+        });
+      }
       this.playLevelUpSound();
       this.createParticleBurst(this.player.x, this.player.y, 0xffff00, 16);
     }
@@ -1294,10 +1316,10 @@ export class GameScene extends Phaser.Scene {
     this.attackPower = 10 + s.str * 2 + this.bonusStats.attack;
     this.maxHp = 100 + s.vit * 8 + this.bonusStats.maxHp;
     this.moveSpeed = 200 + this.bonusStats.speed;
-    this.defense = s.vit * 1;
+    this.defense = s.vit * 1 + this.bonusStats.defense;
     // Math.min(50, ...)처럼 상한을 걸어서, 치명타 확률이 100%를 넘어가는 극단적인
-    // 상황을 방지함 (민첩을 아무리 많이 찍어도 50%가 한계)
-    this.critChance = Math.min(50, s.agi * 0.5);
+    // 상황을 방지함 (민첩+스킬 보너스를 아무리 많이 찍어도 50%가 한계)
+    this.critChance = Math.min(50, s.agi * 0.5 + this.bonusStats.critChance);
     this.critDamage = 150 + s.agi * 2; // 150 = 기본 1.5배, 민첩 1당 2%씩 늘어남
     this.magicPower = s.int * 1;
     this.cooldownReduction = Math.min(40, s.int * 0.5);
@@ -1332,13 +1354,17 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // 내 직업의 스킬 목록에서 이 skillId를 실제로 찾아봄 (다른 직업 스킬을 억지로
-    // 올리려는 시도를 막기 위한 안전장치이기도 함)
     const mySkills = CLASS_SKILLS[this.playerClass] || [];
     const skill = mySkills.find(s => s.id === skillId);
     if (!skill) return;
 
-    const currentLevel = this.skillLevels[skillId] || 0; // 아직 기록이 없으면 0레벨로 취급
+    // 아직 해금 조건을 못 채웠으면 투자 자체를 막음
+    if (!this.isSkillUnlocked(skill)) {
+      this.addLog('아직 해금되지 않은 스킬이에요', 'info');
+      return;
+    }
+
+    const currentLevel = this.skillLevels[skillId] || 0;
     if (currentLevel >= skill.maxLevel) {
       this.addLog('이미 최대 레벨이에요', 'info');
       return;
@@ -1347,18 +1373,47 @@ export class GameScene extends Phaser.Scene {
     this.skillPoints--;
     this.skillLevels[skillId] = currentLevel + 1;
 
-    // 스킬 효과도 이제 bonusStats에 누적하고 recalculateDerivedStats()로 반영함 (장비와 동일한 패턴)
+    // 스킬 효과도 bonusStats에 누적하고 recalculateDerivedStats()로 반영함 (장비와 동일한 패턴)
+    // defense/critChance도 새로 추가된 effectType이에요
     if (skill.effectType === 'attack') {
       this.bonusStats.attack += skill.effectPerLevel;
     } else if (skill.effectType === 'speed') {
       this.bonusStats.speed += skill.effectPerLevel;
     } else if (skill.effectType === 'maxHp') {
       this.bonusStats.maxHp += skill.effectPerLevel;
+    } else if (skill.effectType === 'defense') {
+      this.bonusStats.defense += skill.effectPerLevel;
+    } else if (skill.effectType === 'critChance') {
+      this.bonusStats.critChance += skill.effectPerLevel;
     }
     this.recalculateDerivedStats();
 
     this.addLog(`${skill.name} 레벨 ${this.skillLevels[skillId]}!`, 'gain');
     this.syncStatsToReact();
+  }
+
+  // 스킬 하나(skill 객체)가 지금 해금된 상태인지 확인해요. unlockCondition의 type에 따라
+  // 다르게 판단해요 - 'always'는 항상 true, 'level'/'kills'는 각각 필요한 수치를 비교함
+  isSkillUnlocked(skill) {
+    const condition = skill.unlockCondition;
+    if (!condition || condition.type === 'always') return true;
+    if (condition.type === 'level') return this.level >= condition.value;
+    if (condition.type === 'kills') return this.totalMonsterKills >= condition.value;
+    return false;
+  }
+
+  // 방금 몬스터를 처치한 시점에, 그걸로 새로 해금된 스킬이 있는지 확인해서 알림을 띄워줘요.
+  // (레벨업으로 해금되는 스킬은 gainExp 쪽에서, 처치 수로 해금되는 스킬은 여기서 확인함)
+  checkNewlyUnlockedSkills() {
+    if (!this.playerClass) return;
+    const mySkills = CLASS_SKILLS[this.playerClass] || [];
+
+    mySkills.forEach(skill => {
+      // kills 조건이고, 정확히 이번에 막 조건을 채운 스킬만 알림 (매번 조건 넘길 때마다 또 뜨지 않도록)
+      if (skill.unlockCondition?.type === 'kills' && this.totalMonsterKills === skill.unlockCondition.value) {
+        this.addLog(`새 스킬 해금: ${skill.name}!`, 'gain');
+      }
+    });
   }
 
   // 기본 공격이 몬스터에 맞았을 때 나오는 슬래시 이펙트예요. 처치 여부와 상관없이
@@ -1759,231 +1814,231 @@ export class GameScene extends Phaser.Scene {
   }
 
 
-    // 동물이 화면 안이 아니라 "화면 밖 가장자리"에서 등장하도록 좌표를 계산
-    getEdgeSpawnPosition() {
-      const side = Phaser.Math.Between(0, 3); // 0:위, 1:아래, 2:왼쪽, 3:오른쪽
-      if (side === 0) return { x: Phaser.Math.Between(0, 800), y: -30 };
-      if (side === 1) return { x: Phaser.Math.Between(0, 800), y: 630 };
-      if (side === 2) return { x: -30, y: Phaser.Math.Between(0, 600) };
-      return { x: 830, y: Phaser.Math.Between(0, 600) };
+  // 동물이 화면 안이 아니라 "화면 밖 가장자리"에서 등장하도록 좌표를 계산
+  getEdgeSpawnPosition() {
+    const side = Phaser.Math.Between(0, 3); // 0:위, 1:아래, 2:왼쪽, 3:오른쪽
+    if (side === 0) return { x: Phaser.Math.Between(0, 800), y: -30 };
+    if (side === 1) return { x: Phaser.Math.Between(0, 800), y: 630 };
+    if (side === 2) return { x: -30, y: Phaser.Math.Between(0, 600) };
+    return { x: 830, y: Phaser.Math.Between(0, 600) };
+  }
+
+
+  // 밭 하나를 화면에 그려주는 함수예요. FARM_PLOTS 배열의 항목 하나(plotConfig)를 받아서
+  // 사각형(땅)과, 아직 안 샀다면 가격표까지 만들어줘요.
+  createFarmPlot(plotConfig) {
+    // add.rectangle(x, y, 가로, 세로, 색깔)로 네모난 도형을 만들어요.
+    // 색은 일단 기본값으로 만들고, 실제 정확한 색/보임 여부는 아래 refreshFarmPlotVisual이 정리해줌
+    const plotSprite = this.add.rectangle(plotConfig.x, plotConfig.y, 60, 60, 0x8a9a7a);
+    plotSprite.setStrokeStyle(2, 0x4a3520); // 테두리선 추가 (두께 2, 진한 갈색) - 밭 경계가 잘 보이게
+
+    // 아직 안 산 밭 위에 가격을 보여주는 텍스트도 만들어둠 (구매하면 refreshFarmPlotVisual에서 숨김 처리)
+    const priceLabel = this.add.text(plotConfig.x, plotConfig.y - 40, formatCurrency(plotConfig.price), {
+      fontSize: '11px', color: '#ffd76a', backgroundColor: '#00000088', padding: { x: 4, y: 2 }
+    });
+    priceLabel.setOrigin(0.5); // 텍스트의 기준점을 정중앙으로 맞춰서, 좌표가 딱 중앙에 오도록 함
+
+    // 방금 만든 도형/텍스트들을 this.farmPlots에 저장해둬요.
+    // 나중에 다른 함수에서 "farm1의 사각형 색을 바꿔야지" 할 때 이 저장해둔 걸 다시 꺼내 씀
+    this.farmPlots[plotConfig.id] = {
+      config: plotConfig,
+      plotSprite,
+      priceLabel,
+      cropSprite: null // 아직 심은 작물이 없으니 null(없음)로 시작
+    };
+
+    // 만들자마자 한 번 정확한 상태로 그려줌 (저장 파일 불러와서 이미 구매/재배 중이었을 수도 있으니까)
+    this.refreshFarmPlotVisual(plotConfig.id);
+  }
+
+
+  // 밭 하나의 "지금 상태"를 보고 화면을 최신으로 다시 그려주는 함수예요.
+  // 구매 여부, 심어진 작물, 자란 정도, 그리고 "지금 실내인지"까지 전부 이 함수 하나가 판단해요.
+  // 이렇게 판단 기준을 한 곳에 모아두면, 나중에 이 함수를 어디서 호출하든
+  // (타이머든, 집 출입이든) 매번 따로 "실내면 숨겨야지"를 신경 쓸 필요가 없어져요.
+  refreshFarmPlotVisual(plotId) {
+    const farmObj = this.farmPlots[plotId];
+    if (!farmObj) return; // 혹시 아직 안 만들어진 밭이면 아무것도 안 하고 함수 종료
+
+    // 실내에 있을 때는 밭 관련 그림을 전부 숨기고 여기서 함수를 끝내요.
+    // (entities에서 쓰는 refreshEntityVisual과 똑같은 패턴이에요)
+    if (this.isInsideHouse) {
+      farmObj.plotSprite.setVisible(false);
+      farmObj.priceLabel.setVisible(false);
+      if (farmObj.cropSprite) farmObj.cropSprite.setVisible(false);
+      return;
     }
 
+    // 실외라면 일단 밭 사각형은 보이게 켜둠 (아래에서 세부 상태를 계속 정리함)
+    farmObj.plotSprite.setVisible(true);
 
-    // 밭 하나를 화면에 그려주는 함수예요. FARM_PLOTS 배열의 항목 하나(plotConfig)를 받아서
-    // 사각형(땅)과, 아직 안 샀다면 가격표까지 만들어줘요.
-    createFarmPlot(plotConfig) {
-      // add.rectangle(x, y, 가로, 세로, 색깔)로 네모난 도형을 만들어요.
-      // 색은 일단 기본값으로 만들고, 실제 정확한 색/보임 여부는 아래 refreshFarmPlotVisual이 정리해줌
-      const plotSprite = this.add.rectangle(plotConfig.x, plotConfig.y, 60, 60, 0x8a9a7a);
-      plotSprite.setStrokeStyle(2, 0x4a3520); // 테두리선 추가 (두께 2, 진한 갈색) - 밭 경계가 잘 보이게
+    const owned = !!this.ownedPlots[plotId];
+    const crop = this.plantedCrops[plotId];
 
-      // 아직 안 산 밭 위에 가격을 보여주는 텍스트도 만들어둠 (구매하면 refreshFarmPlotVisual에서 숨김 처리)
-      const priceLabel = this.add.text(plotConfig.x, plotConfig.y - 40, formatCurrency(plotConfig.price), {
-        fontSize: '11px', color: '#ffd76a', backgroundColor: '#00000088', padding: { x: 4, y: 2 }
-      });
-      priceLabel.setOrigin(0.5); // 텍스트의 기준점을 정중앙으로 맞춰서, 좌표가 딱 중앙에 오도록 함
+    // 안 산 밭은 풀빛 회색, 산 밭(경작지)은 갈색으로 표시
+    farmObj.plotSprite.setFillStyle(owned ? 0x6b4a2f : 0x8a9a7a);
 
-      // 방금 만든 도형/텍스트들을 this.farmPlots에 저장해둬요.
-      // 나중에 다른 함수에서 "farm1의 사각형 색을 바꿔야지" 할 때 이 저장해둔 걸 다시 꺼내 씀
-      this.farmPlots[plotConfig.id] = {
-        config: plotConfig,
-        plotSprite,
-        priceLabel,
-        cropSprite: null // 아직 심은 작물이 없으니 null(없음)로 시작
-      };
+    // 가격표는 "안 산 밭일 때만" 보이게 함 (setVisible(true/false)로 화면 표시 여부를 조절)
+    farmObj.priceLabel.setVisible(!owned);
 
-      // 만들자마자 한 번 정확한 상태로 그려줌 (저장 파일 불러와서 이미 구매/재배 중이었을 수도 있으니까)
-      this.refreshFarmPlotVisual(plotConfig.id);
+    // 이전에 작물 그림(원)이 그려져 있었다면 일단 지워요.
+    // destroy()는 "이 오브젝트를 화면에서 완전히 없앤다"는 뜻이에요 (메모리에서도 정리됨)
+    if (farmObj.cropSprite) {
+      farmObj.cropSprite.destroy();
+      farmObj.cropSprite = null;
     }
 
+    // 심어진 작물이 없으면 여기서 끝 (빈 밭이니 원을 새로 그릴 필요 없음)
+    if (!crop) return;
 
-    // 밭 하나의 "지금 상태"를 보고 화면을 최신으로 다시 그려주는 함수예요.
-    // 구매 여부, 심어진 작물, 자란 정도, 그리고 "지금 실내인지"까지 전부 이 함수 하나가 판단해요.
-    // 이렇게 판단 기준을 한 곳에 모아두면, 나중에 이 함수를 어디서 호출하든
-    // (타이머든, 집 출입이든) 매번 따로 "실내면 숨겨야지"를 신경 쓸 필요가 없어져요.
-    refreshFarmPlotVisual(plotId) {
-      const farmObj = this.farmPlots[plotId];
-      if (!farmObj) return; // 혹시 아직 안 만들어진 밭이면 아무것도 안 하고 함수 종료
+    const cropInfo = CROP_TYPES[crop.cropType];
+    const progress = this.getCropProgress(plotId); // 0(막 심음) ~ 1(다 자람) 사이의 숫자
 
-      // 실내에 있을 때는 밭 관련 그림을 전부 숨기고 여기서 함수를 끝내요.
-      // (entities에서 쓰는 refreshEntityVisual과 똑같은 패턴이에요)
-      if (this.isInsideHouse) {
-        farmObj.plotSprite.setVisible(false);
-        farmObj.priceLabel.setVisible(false);
-        if (farmObj.cropSprite) farmObj.cropSprite.setVisible(false);
-        return;
+    // 자랄수록 원이 점점 커지게: 최소 반지름 8, 다 자라면 최대 22
+    const radius = 8 + progress * 14;
+
+    // 다 자랐으면(progress가 1 이상) 눈에 띄는 밝은 노란색으로, 아직 자라는 중이면 작물 고유 색으로 표시
+    const color = progress >= 1 ? 0xffe066 : cropInfo.color;
+
+    farmObj.cropSprite = this.add.circle(plotId ? farmObj.config.x : 0, farmObj.config.y, radius, color);
+  }
+
+  // 지금 이 밭에 심어진 작물이 얼마나 자랐는지 0~1 사이의 숫자로 계산해줘요.
+  // 0 = 방금 심음, 1 = 다 자람(수확 가능), 0.5 = 절반쯤 자람 이런 식이에요.
+  getCropProgress(plotId) {
+    const crop = this.plantedCrops[plotId];
+    if (!crop) return 0; // 아무것도 안 심어져 있으면 자랄 것도 없으니 0
+
+    const cropInfo = CROP_TYPES[crop.cropType];
+
+    // "지금이 게임 속으로 총 몇 분째인지"를 계산해요.
+    // 예: 3일째 오전 2시(120분)라면 = 2일 x 1440분 + 120분 = 2일치를 다 지나온 뒤의 120분
+    // (currentDay가 1부터 시작하니 -1을 빼서 "지나간 날 수"만 계산함)
+    const nowTotalMinutes = (this.currentDay - 1) * 1440 + this.gameMinutes;
+
+    const elapsedMinutes = nowTotalMinutes - crop.plantedAt; // 심은 뒤로 몇 분이 지났는지
+
+    // Math.min(1, ...)은 "계산값이 1보다 커도 최대 1로 묶어준다"는 뜻이에요.
+    // 안 그러면 다 자란 뒤에도 숫자가 계속 커져서(1.5, 2.0...) 나중에 계산이 이상해질 수 있어요.
+    return Math.min(1, elapsedMinutes / cropInfo.growMinutes);
+  }
+
+  // F키를 눌렀을 때 실제로 무슨 일이 일어날지 결정하는 함수예요.
+  // 밭 상태(안 삼/빈 밭/자라는 중/다 자람)에 따라 하는 일이 완전히 달라져요.
+  handleFarmInteract(plotId) {
+    const plotConfig = FARM_PLOTS.find(p => p.id === plotId);
+    const owned = !!this.ownedPlots[plotId];
+
+    // ① 아직 안 산 밭이라면 -> 구매를 시도함
+    if (!owned) {
+      if (this.gold < plotConfig.price) {
+        this.addLog('골드가 부족해서 밭을 살 수 없어요', 'death');
+        return; // return을 만나면 함수가 바로 끝나요 (아래 코드는 실행 안 됨)
       }
 
-      // 실외라면 일단 밭 사각형은 보이게 켜둠 (아래에서 세부 상태를 계속 정리함)
-      farmObj.plotSprite.setVisible(true);
+      this.gold -= plotConfig.price;
+      this.ownedPlots[plotId] = true; // 이제 이 밭은 "내 것"이라고 기록
+      this.addLog(`밭을 구매했어요! (-${formatCurrency(plotConfig.price)})`, 'gain');
+      this.refreshFarmPlotVisual(plotId); // 색이 바로 바뀌도록 화면 갱신
+      this.syncStatsToReact();
+      return;
+    }
 
-      const owned = !!this.ownedPlots[plotId];
-      const crop = this.plantedCrops[plotId];
+    // ② 내 밭인데 아무것도 안 심어져 있다면 -> 심기 메뉴를 열어달라고 React 쪽에 알림
+    const crop = this.plantedCrops[plotId];
+    if (!crop) {
+      if (this.onFarmMenuOpen) this.onFarmMenuOpen(plotId);
+      return;
+    }
 
-      // 안 산 밭은 풀빛 회색, 산 밭(경작지)은 갈색으로 표시
-      farmObj.plotSprite.setFillStyle(owned ? 0x6b4a2f : 0x8a9a7a);
+    // ③ 내 밭에 뭔가 심어져 있다면 -> 다 자랐는지 확인
+    const progress = this.getCropProgress(plotId);
 
-      // 가격표는 "안 산 밭일 때만" 보이게 함 (setVisible(true/false)로 화면 표시 여부를 조절)
-      farmObj.priceLabel.setVisible(!owned);
-
-      // 이전에 작물 그림(원)이 그려져 있었다면 일단 지워요.
-      // destroy()는 "이 오브젝트를 화면에서 완전히 없앤다"는 뜻이에요 (메모리에서도 정리됨)
-      if (farmObj.cropSprite) {
-        farmObj.cropSprite.destroy();
-        farmObj.cropSprite = null;
-      }
-
-      // 심어진 작물이 없으면 여기서 끝 (빈 밭이니 원을 새로 그릴 필요 없음)
-      if (!crop) return;
-
+    if (progress >= 1) {
+      // 다 자랐으면 수확!
       const cropInfo = CROP_TYPES[crop.cropType];
-      const progress = this.getCropProgress(plotId); // 0(막 심음) ~ 1(다 자람) 사이의 숫자
+      const yieldAmount = Phaser.Math.Between(cropInfo.yieldMin, cropInfo.yieldMax); // 몇 개 나올지 무작위로 결정
 
-      // 자랄수록 원이 점점 커지게: 최소 반지름 8, 다 자라면 최대 22
-      const radius = 8 + progress * 14;
+      if (!this.inventory[crop.cropType]) this.inventory[crop.cropType] = 0;
+      this.inventory[crop.cropType] += yieldAmount;
 
-      // 다 자랐으면(progress가 1 이상) 눈에 띄는 밝은 노란색으로, 아직 자라는 중이면 작물 고유 색으로 표시
-      const color = progress >= 1 ? 0xffe066 : cropInfo.color;
+      // delete는 객체 안의 특정 키(항목)를 통째로 지워버리는 자바스크립트 문법이에요.
+      // 이렇게 하면 this.plantedCrops[plotId]가 다시 undefined(없음) 상태가 되어서
+      // 다음에 이 밭을 확인할 때 "빈 밭"으로 인식하게 돼요.
+      delete this.plantedCrops[plotId];
 
-      farmObj.cropSprite = this.add.circle(plotId ? farmObj.config.x : 0, farmObj.config.y, radius, color);
-    }
-
-    // 지금 이 밭에 심어진 작물이 얼마나 자랐는지 0~1 사이의 숫자로 계산해줘요.
-    // 0 = 방금 심음, 1 = 다 자람(수확 가능), 0.5 = 절반쯤 자람 이런 식이에요.
-    getCropProgress(plotId) {
-      const crop = this.plantedCrops[plotId];
-      if (!crop) return 0; // 아무것도 안 심어져 있으면 자랄 것도 없으니 0
-
-      const cropInfo = CROP_TYPES[crop.cropType];
-
-      // "지금이 게임 속으로 총 몇 분째인지"를 계산해요.
-      // 예: 3일째 오전 2시(120분)라면 = 2일 x 1440분 + 120분 = 2일치를 다 지나온 뒤의 120분
-      // (currentDay가 1부터 시작하니 -1을 빼서 "지나간 날 수"만 계산함)
-      const nowTotalMinutes = (this.currentDay - 1) * 1440 + this.gameMinutes;
-
-      const elapsedMinutes = nowTotalMinutes - crop.plantedAt; // 심은 뒤로 몇 분이 지났는지
-
-      // Math.min(1, ...)은 "계산값이 1보다 커도 최대 1로 묶어준다"는 뜻이에요.
-      // 안 그러면 다 자란 뒤에도 숫자가 계속 커져서(1.5, 2.0...) 나중에 계산이 이상해질 수 있어요.
-      return Math.min(1, elapsedMinutes / cropInfo.growMinutes);
-    }
-
-    // F키를 눌렀을 때 실제로 무슨 일이 일어날지 결정하는 함수예요.
-    // 밭 상태(안 삼/빈 밭/자라는 중/다 자람)에 따라 하는 일이 완전히 달라져요.
-    handleFarmInteract(plotId) {
-      const plotConfig = FARM_PLOTS.find(p => p.id === plotId);
-      const owned = !!this.ownedPlots[plotId];
-
-      // ① 아직 안 산 밭이라면 -> 구매를 시도함
-      if (!owned) {
-        if (this.gold < plotConfig.price) {
-          this.addLog('골드가 부족해서 밭을 살 수 없어요', 'death');
-          return; // return을 만나면 함수가 바로 끝나요 (아래 코드는 실행 안 됨)
-        }
-
-        this.gold -= plotConfig.price;
-        this.ownedPlots[plotId] = true; // 이제 이 밭은 "내 것"이라고 기록
-        this.addLog(`밭을 구매했어요! (-${formatCurrency(plotConfig.price)})`, 'gain');
-        this.refreshFarmPlotVisual(plotId); // 색이 바로 바뀌도록 화면 갱신
-        this.syncStatsToReact();
-        return;
-      }
-
-      // ② 내 밭인데 아무것도 안 심어져 있다면 -> 심기 메뉴를 열어달라고 React 쪽에 알림
-      const crop = this.plantedCrops[plotId];
-      if (!crop) {
-        if (this.onFarmMenuOpen) this.onFarmMenuOpen(plotId);
-        return;
-      }
-
-      // ③ 내 밭에 뭔가 심어져 있다면 -> 다 자랐는지 확인
-      const progress = this.getCropProgress(plotId);
-
-      if (progress >= 1) {
-        // 다 자랐으면 수확!
-        const cropInfo = CROP_TYPES[crop.cropType];
-        const yieldAmount = Phaser.Math.Between(cropInfo.yieldMin, cropInfo.yieldMax); // 몇 개 나올지 무작위로 결정
-
-        if (!this.inventory[crop.cropType]) this.inventory[crop.cropType] = 0;
-        this.inventory[crop.cropType] += yieldAmount;
-
-        // delete는 객체 안의 특정 키(항목)를 통째로 지워버리는 자바스크립트 문법이에요.
-        // 이렇게 하면 this.plantedCrops[plotId]가 다시 undefined(없음) 상태가 되어서
-        // 다음에 이 밭을 확인할 때 "빈 밭"으로 인식하게 돼요.
-        delete this.plantedCrops[plotId];
-
-        this.addLog(`${cropInfo.name} ${yieldAmount}개 수확했어요!`, 'gain');
-        this.refreshFarmPlotVisual(plotId);
-        this.syncStatsToReact();
-      } else {
-        // 아직 덜 자랐으면 지금 몇 퍼센트인지만 알림으로 알려줌
-        const percent = Math.floor(progress * 100);
-        this.addLog(`아직 자라는 중이에요 (${percent}%)`, 'info');
-      }
-    }
-
-    // React 쪽(App.js)의 심기 메뉴에서 씨앗을 선택했을 때 호출되는 함수예요.
-    plantSeed(plotId, seedItemId) {
-      // 이 씨앗을 실제로 갖고 있는지 확인 (없으면 아무것도 안 하고 종료)
-      if (!this.inventory[seedItemId] || this.inventory[seedItemId] <= 0) return;
-
-      const seedItem = SHOP_ITEMS.find(i => i.id === seedItemId);
-      if (!seedItem || seedItem.category !== 'seed') return; // 씨앗이 아닌 걸 심으려고 하면 무시
-
-      this.inventory[seedItemId]--; // 씨앗을 하나 소모함
-
-      // 이 밭에 "지금 심었다"는 기록을 남김
-      // plantedAt에는 "지금이 게임 속으로 총 몇 분째인지"를 저장해서, 나중에 얼마나 자랐는지 계산할 때 씀
-      this.plantedCrops[plotId] = {
-        cropType: seedItem.cropType,
-        plantedAt: (this.currentDay - 1) * 1440 + this.gameMinutes
-      };
-
-      if (this.onFarmMenuOpen) this.onFarmMenuOpen(null); // React 쪽 심기 메뉴를 닫아달라고 알림 (null = "닫아줘")
-
-      const cropInfo = CROP_TYPES[seedItem.cropType];
-      this.addLog(`${cropInfo.name} 씨앗을 심었어요`, 'gain');
+      this.addLog(`${cropInfo.name} ${yieldAmount}개 수확했어요!`, 'gain');
       this.refreshFarmPlotVisual(plotId);
       this.syncStatsToReact();
-    }
-
-    // NPC 오브젝트를 생성하는 통합 함수 - NPC_DATA에 항목만 추가하면 몇 명이든 생성 가능
-    createNpc(x, y, npcTypeKey) {
-      const info = NPC_DATA[npcTypeKey];
-
-      // NPC는 움직이지 않으므로 "아래를 보는" 프레임(1번)을 고정으로 사용
-      const npc = this.add.sprite(x, y, info.spriteKey, 1);
-      npc.setScale(5); // 플레이어와 동일한 배율 (16px 원본 -> 80px 표시)
-      npc.npcType = npcTypeKey;
-
-      this.physics.add.existing(npc, true); // 정적 물리 바디 (제자리 고정)
-
-      // 걷기 프레임이 없는 에셋이라도, 제자리에서 살짝 위아래로 흔들리게 하면
-      // 정지된 느낌 대신 "숨쉬는" 느낌을 줄 수 있음 (새 이미지 없이 코드만으로 구현)
-      // 물리 바디는 이 흔들림을 따라가지 않지만, 흔들리는 폭이 작아 충돌 판정엔 거의 영향 없음
-      this.tweens.add({
-        targets: npc,
-        y: y - 4,
-        duration: 700 + Math.random() * 300, // NPC마다 흔들리는 주기를 살짝 다르게 해서 기계적으로 안 보이게 함
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut'
-      });
-
-      return npc;
-    }
-
-    // 집 오브젝트를 생성하는 통합 함수 - BUILDING_TYPES 데이터만 있으면 몇 채든 생성 가능
-    createHouse(x, y, typeKey) {
-      const info = BUILDING_TYPES[typeKey];
-
-      const house = this.add.rectangle(x, y, info.width, info.height, info.color);
-      house.buildingType = typeKey; // 나중에 어떤 종류의 집인지 구분하기 위한 태그
-
-      this.physics.add.existing(house, true); // 정적 오브젝트 (부딪히면 못 지나감)
-      this.physics.add.collider(this.player, house);
-
-      return house;
+    } else {
+      // 아직 덜 자랐으면 지금 몇 퍼센트인지만 알림으로 알려줌
+      const percent = Math.floor(progress * 100);
+      this.addLog(`아직 자라는 중이에요 (${percent}%)`, 'info');
     }
   }
+
+  // React 쪽(App.js)의 심기 메뉴에서 씨앗을 선택했을 때 호출되는 함수예요.
+  plantSeed(plotId, seedItemId) {
+    // 이 씨앗을 실제로 갖고 있는지 확인 (없으면 아무것도 안 하고 종료)
+    if (!this.inventory[seedItemId] || this.inventory[seedItemId] <= 0) return;
+
+    const seedItem = SHOP_ITEMS.find(i => i.id === seedItemId);
+    if (!seedItem || seedItem.category !== 'seed') return; // 씨앗이 아닌 걸 심으려고 하면 무시
+
+    this.inventory[seedItemId]--; // 씨앗을 하나 소모함
+
+    // 이 밭에 "지금 심었다"는 기록을 남김
+    // plantedAt에는 "지금이 게임 속으로 총 몇 분째인지"를 저장해서, 나중에 얼마나 자랐는지 계산할 때 씀
+    this.plantedCrops[plotId] = {
+      cropType: seedItem.cropType,
+      plantedAt: (this.currentDay - 1) * 1440 + this.gameMinutes
+    };
+
+    if (this.onFarmMenuOpen) this.onFarmMenuOpen(null); // React 쪽 심기 메뉴를 닫아달라고 알림 (null = "닫아줘")
+
+    const cropInfo = CROP_TYPES[seedItem.cropType];
+    this.addLog(`${cropInfo.name} 씨앗을 심었어요`, 'gain');
+    this.refreshFarmPlotVisual(plotId);
+    this.syncStatsToReact();
+  }
+
+  // NPC 오브젝트를 생성하는 통합 함수 - NPC_DATA에 항목만 추가하면 몇 명이든 생성 가능
+  createNpc(x, y, npcTypeKey) {
+    const info = NPC_DATA[npcTypeKey];
+
+    // NPC는 움직이지 않으므로 "아래를 보는" 프레임(1번)을 고정으로 사용
+    const npc = this.add.sprite(x, y, info.spriteKey, 1);
+    npc.setScale(5); // 플레이어와 동일한 배율 (16px 원본 -> 80px 표시)
+    npc.npcType = npcTypeKey;
+
+    this.physics.add.existing(npc, true); // 정적 물리 바디 (제자리 고정)
+
+    // 걷기 프레임이 없는 에셋이라도, 제자리에서 살짝 위아래로 흔들리게 하면
+    // 정지된 느낌 대신 "숨쉬는" 느낌을 줄 수 있음 (새 이미지 없이 코드만으로 구현)
+    // 물리 바디는 이 흔들림을 따라가지 않지만, 흔들리는 폭이 작아 충돌 판정엔 거의 영향 없음
+    this.tweens.add({
+      targets: npc,
+      y: y - 4,
+      duration: 700 + Math.random() * 300, // NPC마다 흔들리는 주기를 살짝 다르게 해서 기계적으로 안 보이게 함
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+
+    return npc;
+  }
+
+  // 집 오브젝트를 생성하는 통합 함수 - BUILDING_TYPES 데이터만 있으면 몇 채든 생성 가능
+  createHouse(x, y, typeKey) {
+    const info = BUILDING_TYPES[typeKey];
+
+    const house = this.add.rectangle(x, y, info.width, info.height, info.color);
+    house.buildingType = typeKey; // 나중에 어떤 종류의 집인지 구분하기 위한 태그
+
+    this.physics.add.existing(house, true); // 정적 오브젝트 (부딪히면 못 지나감)
+    this.physics.add.collider(this.player, house);
+
+    return house;
+  }
+}
 
