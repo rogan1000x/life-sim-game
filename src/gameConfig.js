@@ -164,7 +164,7 @@ export const NPC_DATA = {
       '저기 저 집 보이시죠? 제법 아늑하답니다.'
     ]
   },
- villager3: {
+  villager3: {
     name: '떠돌이 여행자',
     spriteKey: 'npc_villager3',
     hasShop: false, // 상점 없이 대화만 가능
@@ -195,6 +195,20 @@ export const NPC_DATA = {
 // category: 'consumable'(즉시 사용/소모) 또는 'equipment'(장착/해제, 장착 중일 때만 효과 적용)
 // equipment는 slot(장착 부위)을 가짐 - 지금은 weapon 하나뿐이지만 나중에 방어구 등으로 확장 가능
 // 내구도 시스템은 추후 추가 예정 (지금은 장착/해제 기반까지만 구현)
+// 장비 슬롯 목록이에요. UI에서 "이 슬롯엔 이 이름표를 붙여서 보여줘"라고 할 때 씀
+// (하드코딩으로 "장착 무기" 한 줄만 있던 걸, 이 데이터를 순회하며 모든 슬롯을 자동으로 보여주는 방식으로 바꿀 거예요)
+export const EQUIPMENT_SLOTS = [
+  { id: 'head', label: '머리', icon: '🪖' },
+  { id: 'body', label: '몸통', icon: '👕' },
+  { id: 'pants', label: '바지', icon: '👖' },
+  { id: 'gloves', label: '장갑', icon: '🧤' },
+  { id: 'shoes', label: '신발', icon: '👟' },
+  { id: 'weapon', label: '무기', icon: '🗡' },
+  { id: 'shield', label: '방패', icon: '🛡' },
+  { id: 'ring', label: '반지', icon: '💍' },
+  { id: 'necklace', label: '목걸이', icon: '📿' }
+];
+
 // 상점/시장에서 거래 가능한 모든 아이템 목록
 // basePrice는 재고가 기준치(10)일 때의 가격. 실제 거래 가격은 GameScene의
 // getMarketPrice()가 재고량에 따라 매번 다시 계산함 (사면 비싸지고, 팔면 싸짐)
@@ -210,6 +224,31 @@ export const SHOP_ITEMS = [
   { id: 'item_stopsign', name: '경고 표지판', basePrice: 60, category: 'equipment', slot: 'weapon', effectType: 'maxHp', effectValue: 30, icon: 'item_stopsign.png', maxDurability: 45 },
   { id: 'item_crosssign', name: '교차로 표지판', basePrice: 70, category: 'equipment', slot: 'weapon', effectType: 'speed', effectValue: 15, icon: 'item_crosssign.png', maxDurability: 50 },
   { id: 'item_streetlamp', name: '가로등 부품', basePrice: 90, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 8, icon: 'item_streetlamp.png', maxDurability: 60 },
+
+  // 머리
+  { id: 'head_leather_cap', name: '가죽 모자', basePrice: 25, category: 'equipment', slot: 'head', effectType: 'maxHp', effectValue: 15, icon: null, maxDurability: 25 },
+  { id: 'head_steel_helm', name: '강철 투구', basePrice: 55, category: 'equipment', slot: 'head', effectType: 'defense', effectValue: 3, icon: null, maxDurability: 45 },
+  // 몸통
+  { id: 'body_cloth_robe', name: '천 갑옷', basePrice: 30, category: 'equipment', slot: 'body', effectType: 'maxHp', effectValue: 25, icon: null, maxDurability: 30 },
+  { id: 'body_chain_mail', name: '사슬 갑옷', basePrice: 65, category: 'equipment', slot: 'body', effectType: 'defense', effectValue: 5, icon: null, maxDurability: 50 },
+  // 바지
+  { id: 'pants_leather', name: '가죽 바지', basePrice: 22, category: 'equipment', slot: 'pants', effectType: 'speed', effectValue: 8, icon: null, maxDurability: 25 },
+  { id: 'pants_steel_greaves', name: '강철 각반', basePrice: 50, category: 'equipment', slot: 'pants', effectType: 'defense', effectValue: 3, icon: null, maxDurability: 40 },
+  // 장갑
+  { id: 'gloves_leather', name: '가죽 장갑', basePrice: 20, category: 'equipment', slot: 'gloves', effectType: 'attack', effectValue: 3, icon: null, maxDurability: 25 },
+  { id: 'gloves_gauntlet', name: '강철 건틀릿', basePrice: 45, category: 'equipment', slot: 'gloves', effectType: 'defense', effectValue: 2, icon: null, maxDurability: 35 },
+  // 신발
+  { id: 'shoes_leather', name: '가죽 신발', basePrice: 20, category: 'equipment', slot: 'shoes', effectType: 'speed', effectValue: 10, icon: null, maxDurability: 25 },
+  { id: 'shoes_steel_boots', name: '강철 부츠', basePrice: 45, category: 'equipment', slot: 'shoes', effectType: 'defense', effectValue: 2, icon: null, maxDurability: 35 },
+  // 방패
+  { id: 'shield_wood', name: '나무 방패', basePrice: 30, category: 'equipment', slot: 'shield', effectType: 'defense', effectValue: 4, icon: null, maxDurability: 30 },
+  { id: 'shield_steel', name: '강철 방패', basePrice: 70, category: 'equipment', slot: 'shield', effectType: 'defense', effectValue: 8, icon: null, maxDurability: 55 },
+  // 반지
+  { id: 'ring_agility', name: '민첩의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 3, icon: null, maxDurability: 999 },
+  { id: 'ring_power', name: '힘의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'attack', effectValue: 5, icon: null, maxDurability: 999 },
+  // 목걸이
+  { id: 'necklace_vitality', name: '활력의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 30, icon: null, maxDurability: 999 },
+  { id: 'necklace_swift', name: '신속의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'speed', effectValue: 12, icon: null, maxDurability: 999 },
   { id: 'tree', name: '나무', basePrice: 5, category: 'resource', icon: null },
   { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
   { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
@@ -232,7 +271,7 @@ export const SHOP_ITEMS = [
   // 사용(useItem) 로직을 그대로 재사용할 수 있어요 (먹으면 HP 회복).
   // tavernOnly: true는 "일반 상인(villager1)한테는 안 팔고, 주점에서만 살 수 있다"는 표시예요.
   // App.js에서 상인 상점 목록을 만들 때 이 값이 true인 아이템은 걸러내고 안 보여줄 거예요.
-// unlimitedStock: true는 "재고 개념 없이 항상 살 수 있다"는 뜻이에요. 주점이 매번
+  // unlimitedStock: true는 "재고 개념 없이 항상 살 수 있다"는 뜻이에요. 주점이 매번
   // 새로 만들어주는 음식이라는 설정이라, 다른 아이템처럼 재고가 바닥날 필요가 없어서 추가함
   { id: 'food_bread', name: '빵', basePrice: 15, category: 'consumable', effectType: 'heal', effectValue: 25, tavernOnly: true, unlimitedStock: true, icon: null },
   { id: 'food_stew', name: '스튜', basePrice: 35, category: 'consumable', effectType: 'heal', effectValue: 60, tavernOnly: true, unlimitedStock: true, icon: null }
@@ -293,6 +332,42 @@ export const COMPANION_TYPES = {
     hireCost: 5000, // 0G 50S 0C
     attackBonus: 4,
     description: '함께 몬스터를 상대해주는 든든한 동료예요'
+  }
+};
+
+// 직업별 액티브 스킬이에요. 지금은 직업당 1개씩만 있고, 전부 Q키로 발동해요
+// (E/R키는 나중에 스킬이 더 늘어나면 쓸 자리로 비워둠).
+// cooldownMs는 기본 쿨타임(밀리초)이고, 실제로는 재사용 대기시간 감소(지능 스탯)만큼 짧아져요.
+export const CLASS_ACTIVE_SKILLS = {
+  warrior: {
+    id: 'active_warrior_charge', name: '돌진 베기', key: 'Q', cooldownMs: 6000,
+    range: 200, damageMultiplier: 2.5,
+    description: '가장 가까운 몬스터에게 돌진해 강력한 일격을 가해요 (공격력 x2.5)'
+  },
+  archer: {
+    id: 'active_archer_pierce', name: '관통 사격', key: 'Q', cooldownMs: 5000,
+    range: 300, damageMultiplier: 2.0,
+    description: '먼 거리의 몬스터에게 강한 사격을 명중시켜요 (공격력 x2.0)'
+  },
+  mage: {
+    id: 'active_mage_fireball', name: '파이어볼', key: 'Q', cooldownMs: 8000,
+    range: 250, aoeRadius: 80, damageMultiplier: 3.0, useMagicPower: true,
+    description: '마력을 담은 화염구로 주변 몬스터 전부에게 피해를 줘요'
+  },
+  priest: {
+    id: 'active_priest_heal', name: '치유의 빛', key: 'Q', cooldownMs: 10000,
+    healAmount: 40, useMagicPower: true,
+    description: '스스로에게 즉시 체력을 회복시켜요 (고정 회복량 + 마력)'
+  },
+  rogue: {
+    id: 'active_rogue_shadowstrike', name: '그림자 일격', key: 'Q', cooldownMs: 7000,
+    range: 200, damageMultiplier: 1.8,
+    description: '가장 가까운 몬스터에게 반드시 치명타가 적중하는 일격을 가해요'
+  },
+  summoner: {
+    id: 'active_summoner_empower', name: '소환수 강화', key: 'Q', cooldownMs: 12000,
+    buffDurationMs: 8000, buffMultiplier: 2.0,
+    description: '8초간 동료의 전투 보너스 데미지를 크게 증폭시켜요'
   }
 };
 

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -31,6 +31,14 @@ export class GameScene extends Phaser.Scene {
     // 지금까지 처치한 몬스터 총 마릿수예요. "전투 중 해금되는 스킬"의 조건으로 쓰여요.
     this.totalMonsterKills = 0;
 
+    // 액티브 스킬(Q키)이 다시 쓸 수 있게 되는 "시각"을 저장해요 (this.time.now 기준, 밀리초).
+    // 예를 들어 이 값이 5000이고 지금 this.time.now가 3000이면, 아직 2초 남았다는 뜻이에요.
+    this.activeSkillCooldownEndTime = 0;
+
+    // 소환사의 "소환수 강화" 스킬이 끝나는 시각이에요. 이 시각이 지나기 전까지는
+    // 동료의 데미지에 buffMultiplier가 추가로 곱해져요.
+    this.companionBuffEndTime = 0;
+
     this.attackPower = 10;
     this.maxHp = 100;
     this.moveSpeed = 200;
@@ -48,7 +56,12 @@ export class GameScene extends Phaser.Scene {
     this.gameMinutes = 480;      // 게임 속 현재 시각 (분 단위, 480 = 08:00부터 시작)
     this.currentDay = 1;         // 게임 속 날짜
     this.nightIntensity = 0;     // 밤의 깊이 (0=낮, 0.6=한밤중) - 몬스터 강화 배율 계산에 사용
-    this.equipped = { weapon: null }; // 슬롯별 장착 중인 아이템 id (지금은 weapon 슬롯만 존재)
+    // 슬롯별 장착 중인 아이템 id예요. EQUIPMENT_SLOTS에 정의된 9개 슬롯을 전부 순회하면서
+    // 자동으로 { head: null, body: null, ... } 형태를 만들어요 - 슬롯이 늘어나도 이 코드는 안 바뀜
+    this.equipped = {};
+    EQUIPMENT_SLOTS.forEach(slotInfo => {
+      this.equipped[slotInfo.id] = null;
+    });
 
     // 장비별 "지금 남아있는 내구도"를 저장하는 곳이에요.
     // 예: { item_pickaxe: 12 } 라면, 곡괭이가 지금 12번 더 때리면 부서진다는 뜻이에요.
@@ -124,6 +137,10 @@ export class GameScene extends Phaser.Scene {
     this.onLog = null;         // 몬스터 처치/아이템 획득/사망 등 이벤트를 알림창에 전달하는 함수
     this.onFarmMenuOpen = null; // 빈 밭에서 F키를 눌렀을 때, "씨앗 심기 메뉴"를 열어달라고 React에 요청하는 함수
     this.onTavernOpen = null;   // 주점에 들어가거나 나올 때, React 쪽 주점 메뉴를 열고/닫아달라고 요청하는 함수
+    // 액티브 스킬 쿨타임 표시를 위해, 매 프레임 "남은 시간(ms)"을 React에 알려주는 함수예요.
+    // syncStatsToReact()는 저장(saveGame)까지 같이 하기 때문에 매 프레임 부르면 부담이 커서,
+    // 이건 저장 없이 숫자만 가볍게 전달하는 용도로 따로 만들었어요.
+    this.onCooldownUpdate = null;
     this.godMode = false;      // Admin 무적 모드 (App.js에서 값 변경)
   }
 
@@ -197,7 +214,10 @@ export class GameScene extends Phaser.Scene {
       // 예전 저장 파일에는 이 값이 없을 수 있어 undefined 체크 후 있을 때만 덮어씀
       if (data.gameMinutes !== undefined) this.gameMinutes = data.gameMinutes;
       if (data.currentDay !== undefined) this.currentDay = data.currentDay;
-      if (data.equipped !== undefined) this.equipped = data.equipped;
+      // {...this.equipped, ...data.equipped}로 합치면, 예전 저장 파일에 weapon 슬롯만
+      // 있었더라도 새로 생긴 head/body 같은 슬롯들은 constructor에서 만든 기본값(null)을
+      // 그대로 유지하면서 weapon 값만 정확히 덮어씌워져요 (슬롯이 아예 사라지는 걸 방지)
+      if (data.equipped !== undefined) this.equipped = { ...this.equipped, ...data.equipped };
       if (data.marketStock !== undefined) this.marketStock = { ...this.marketStock, ...data.marketStock };
       // 예전 저장 파일에는 농사 데이터가 아예 없을 수 있어서, 있을 때만 덮어씀
       if (data.ownedPlots !== undefined) this.ownedPlots = data.ownedPlots;
@@ -304,6 +324,7 @@ export class GameScene extends Phaser.Scene {
     this.eKey = this.input.keyboard.addKey('E');
     this.hKey = this.input.keyboard.addKey('H'); // 집 입장/퇴장 키
     this.fKey = this.input.keyboard.addKey('F'); // 밭 구매/심기/수확에 사용하는 키
+    this.qKey = this.input.keyboard.addKey('Q'); // 액티브 스킬 발동 키
 
     this.physics.add.collider(this.player, this.entities);
 
@@ -454,6 +475,16 @@ export class GameScene extends Phaser.Scene {
     this.handleMovement();
     this.updateCompanionFollow(); // 동료가 있으면 플레이어를 따라오게 함
 
+    // 액티브 스킬 쿨타임 남은 시간을 매 프레임 계산해서 React에 알려줌 (화면에 초 단위로 보여주기 위함)
+    // Math.max(0, ...)로 음수가 안 나오게 막아둠 (쿨타임 다 지나면 0에서 멈춤)
+    const cooldownRemaining = Math.max(0, this.activeSkillCooldownEndTime - this.time.now);
+    if (this.onCooldownUpdate) this.onCooldownUpdate(cooldownRemaining);
+
+    // Q키를 눌렀으면 액티브 스킬 발동을 시도함
+    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+      this.useActiveSkill();
+    }
+
     // 몬스터는 항상 플레이어를 추적
     this.entities.getChildren().forEach(entity => {
       if (!entity.active) return;
@@ -561,36 +592,18 @@ export class GameScene extends Phaser.Scene {
             );
             if (companionDistance < 150) {
               // 직업이 소환사면 CLASS_TYPES의 companionBonusMultiplier만큼 동료 데미지를 곱해줌
-              // 소환사가 아니면 이 필드가 없으니 그냥 1배(원래 그대로)로 처리됨
               const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
-              entity.hp -= companionInfo.attackBonus * companionMultiplier;
+              // "소환수 강화" 액티브 스킬이 아직 효과가 지속 중이면(companionBuffEndTime이 안 지났으면)
+              // buffMultiplier를 한 번 더 곱해서 일시적으로 훨씬 강해지게 함
+              const isBuffActive = this.time.now < this.companionBuffEndTime;
+              const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
+
+              entity.hp -= companionInfo.attackBonus * companionMultiplier * buffMultiplier;
             }
           }
 
           if (entity.hp <= 0) {
-            // 채집 자원과 동일한 방식으로 숨김 상태 관리 (실내 여부와 충돌 방지)
-            entity.isHarvested = true;
-            this.refreshEntityVisual(entity);
-
-            this.addToInventory(entity.entityType);
-            this.gainExp(info.exp);
-            this.totalMonsterKills++; // 전투 해금 스킬의 조건으로 쓰이는 누적 처치 수
-
-            // 이번 처치로 새로 해금된 스킬이 있으면 알려줌 (예: 광전사의 분노가 지금 막 열렸을 때)
-            this.checkNewlyUnlockedSkills();
-
-            this.addLog(`${info.name} 처치! (+${info.exp} EXP, 상인에게 팔 수 있어요)`, 'kill');
-
-            this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
-
-            // 처치 후 랜덤 시간 뒤 새 위치에서 리스폰
-            setTimeout(() => {
-              entity.hp = entity.maxHp;
-              entity.x = Phaser.Math.Between(50, 750);
-              entity.y = Phaser.Math.Between(50, 550);
-              entity.isHarvested = false;
-              this.refreshEntityVisual(entity);
-            }, Phaser.Math.Between(GAME_CONFIG.wolfRespawnMin, GAME_CONFIG.wolfRespawnMax));
+            this.defeatMonster(entity, info);
           }
         }
       });
@@ -1120,6 +1133,7 @@ export class GameScene extends Phaser.Scene {
         mySkills.forEach(skill => {
           if (skill.unlockCondition?.type === 'level' && this.level === skill.unlockCondition.value) {
             this.addLog(`새 스킬 해금: ${skill.name}!`, 'gain');
+            this.createSkillUnlockEffect(this.player.x, this.player.y);
           }
         });
       }
@@ -1388,6 +1402,9 @@ export class GameScene extends Phaser.Scene {
     }
     this.recalculateDerivedStats();
 
+    // 스킬을 강화할 때마다 캐릭터 위치에서 금색 파티클이 터지는 이펙트를 보여줌
+    this.createParticleBurst(this.player.x, this.player.y, 0xffd76a, 10);
+
     this.addLog(`${skill.name} 레벨 ${this.skillLevels[skillId]}!`, 'gain');
     this.syncStatsToReact();
   }
@@ -1416,6 +1433,141 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // 몬스터가 죽었을 때 공통으로 처리하는 함수예요. 기존엔 스페이스바 공격 코드 안에만 있던
+  // 내용인데, 액티브 스킬로도 몬스터를 죽일 수 있게 되면서 두 곳에서 재사용하려고 분리했어요.
+  defeatMonster(entity, info) {
+    entity.isHarvested = true;
+    this.refreshEntityVisual(entity);
+
+    this.addToInventory(entity.entityType);
+    this.gainExp(info.exp);
+    this.totalMonsterKills++;
+
+    this.checkNewlyUnlockedSkills();
+
+    this.addLog(`${info.name} 처치! (+${info.exp} EXP, 상인에게 팔 수 있어요)`, 'kill');
+    this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
+
+    setTimeout(() => {
+      entity.hp = entity.maxHp;
+      entity.x = Phaser.Math.Between(50, 750);
+      entity.y = Phaser.Math.Between(50, 550);
+      entity.isHarvested = false;
+      this.refreshEntityVisual(entity);
+    }, Phaser.Math.Between(GAME_CONFIG.wolfRespawnMin, GAME_CONFIG.wolfRespawnMax));
+  }
+
+  // maxRange 안에서 가장 가까운 몬스터 하나를 찾아줘요. 없으면 null을 돌려줌.
+  findNearestMonster(maxRange) {
+    let nearest = null;
+    let nearestDistance = maxRange;
+
+    this.entities.getChildren().forEach(entity => {
+      if (!entity.active) return;
+      const info = ENTITY_TYPES[entity.entityType];
+      if (info.category !== 'hostile_monster') return;
+
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, entity.x, entity.y);
+      if (distance < nearestDistance) {
+        nearest = entity;
+        nearestDistance = distance;
+      }
+    });
+
+    return nearest;
+  }
+
+  // Q키를 눌렀을 때 실제로 실행되는 함수예요. 직업마다 완전히 다른 동작을 하기 때문에
+  // classId로 분기해서 각자 다른 로직을 실행해요.
+  useActiveSkill() {
+    if (!this.playerClass) return; // 직업이 없으면 스킬도 없음
+
+    const skill = CLASS_ACTIVE_SKILLS[this.playerClass];
+    if (!skill) return;
+
+    // 쿨타임이 아직 안 끝났으면 발동 취소하고 몇 초 남았는지 알려줌
+    if (this.time.now < this.activeSkillCooldownEndTime) {
+      const remainingSec = Math.ceil((this.activeSkillCooldownEndTime - this.time.now) / 1000);
+      this.addLog(`아직 쿨타임이에요 (${remainingSec}초)`, 'info');
+      return;
+    }
+
+    let skillUsed = false; // 실제로 스킬이 발동됐는지(예: 사거리 안에 대상이 없으면 실패) 표시
+
+    if (this.playerClass === 'warrior' || this.playerClass === 'archer' || this.playerClass === 'rogue') {
+      // 세 직업 모두 "가장 가까운 몬스터 하나에게 강한 일격"이라는 같은 패턴이라 묶어서 처리함
+      const target = this.findNearestMonster(skill.range);
+      if (!target) {
+        this.addLog('사거리 안에 몬스터가 없어요', 'info');
+      } else {
+        const targetInfo = ENTITY_TYPES[target.entityType];
+        const boostedAttack = this.attackPower * skill.damageMultiplier;
+
+        // 도적 스킬만 "무조건 치명타"가 적용됨 - critDamage 배율을 강제로 곱해줌
+        const finalDamage = this.playerClass === 'rogue'
+          ? Math.round(boostedAttack * (this.critDamage / 100))
+          : Math.round(boostedAttack);
+
+        target.hp -= finalDamage;
+        this.createParticleBurst(target.x, target.y, 0xffe066, 16); // 일반 공격보다 화려하게
+        this.addLog(`${skill.name}! ${finalDamage} 피해`, 'kill');
+
+        if (target.hp <= 0) this.defeatMonster(target, targetInfo);
+        skillUsed = true;
+      }
+    } else if (this.playerClass === 'mage') {
+      // 마법사는 가장 가까운 몬스터를 중심으로, 그 주변(aoeRadius) 안의 몬스터 전부에게 피해를 줌
+      const target = this.findNearestMonster(skill.range);
+      if (!target) {
+        this.addLog('사거리 안에 몬스터가 없어요', 'info');
+      } else {
+        const damage = Math.round(this.magicPower * skill.damageMultiplier);
+        this.createParticleBurst(target.x, target.y, 0xff6633, 24); // 폭발 느낌으로 더 크게
+
+        // 화염구가 떨어진 지점(target 위치) 기준으로, aoeRadius 안에 있는 몬스터를 전부 찾아 피해를 줌
+        this.entities.getChildren().forEach(entity => {
+          if (!entity.active) return;
+          const info = ENTITY_TYPES[entity.entityType];
+          if (info.category !== 'hostile_monster') return;
+
+          const distance = Phaser.Math.Distance.Between(target.x, target.y, entity.x, entity.y);
+          if (distance <= skill.aoeRadius) {
+            entity.hp -= damage;
+            if (entity.hp <= 0) this.defeatMonster(entity, info);
+          }
+        });
+
+        this.addLog(`${skill.name}! ${damage} 광역 피해`, 'kill');
+        skillUsed = true;
+      }
+    } else if (this.playerClass === 'priest') {
+      // 성직자는 대상 없이 즉시 자기 자신을 치유함
+      const healAmount = skill.healAmount + this.magicPower;
+      this.hp = Math.min(this.maxHp, this.hp + healAmount);
+      this.hpText.setText('HP: ' + this.hp);
+      this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 14); // 하늘색 파티클로 회복 느낌
+      this.addLog(`${skill.name}! HP +${healAmount}`, 'gain');
+      skillUsed = true;
+    } else if (this.playerClass === 'summoner') {
+      // 소환사는 동료가 있을 때만 의미가 있는 버프 스킬임
+      if (!this.companionSprite) {
+        this.addLog('버프를 걸어줄 동료가 없어요', 'info');
+      } else {
+        this.companionBuffEndTime = this.time.now + skill.buffDurationMs;
+        this.createParticleBurst(this.companionSprite.x, this.companionSprite.y, 0xc77dff, 18);
+        this.addLog(`${skill.name}! 동료가 강해졌어요`, 'gain');
+        skillUsed = true;
+      }
+    }
+
+    // 실제로 스킬이 발동됐을 때만 쿨타임을 시작함 (대상이 없어서 실패한 경우엔 쿨타임 낭비 안 되게)
+    if (skillUsed) {
+      // 쿨타임 감소(지능 스탯에서 나오는 cooldownReduction, %)를 적용함
+      const actualCooldown = skill.cooldownMs * (1 - this.cooldownReduction / 100);
+      this.activeSkillCooldownEndTime = this.time.now + actualCooldown;
+    }
+  }
+
   // 기본 공격이 몬스터에 맞았을 때 나오는 슬래시 이펙트예요. 처치 여부와 상관없이
   // "때릴 때마다" 나와서, 공격이 실제로 명중했다는 느낌을 즉각적으로 줘요.
   // (기존 createParticleBurst는 "처치했을 때"만 나오는 별개의 이펙트예요)
@@ -1431,6 +1583,32 @@ export class GameScene extends Phaser.Scene {
       duration: 150, // 아주 짧게(0.15초) 나왔다 사라지게 해서 공격 리듬을 안 늦춤
       onComplete: () => slash.destroy()
     });
+  }
+
+  // 새 스킬이 해금되는 순간에 쓰는, 좀 더 화려한 이펙트예요.
+  // 링(원형 테두리)이 점점 커지면서 옅어지는 효과 2겹 + 파티클을 같이 써서
+  // 스탯 강화 같은 사소한 이벤트보다 "중요한 일이 일어났다"는 느낌을 줌
+  createSkillUnlockEffect(x, y) {
+    // 크기가 다른 링 2개를 살짝 시간차를 두고 만들어서, 파문이 두 번 퍼지는 느낌을 줌
+    for (let i = 0; i < 2; i++) {
+      // this.time.delayedCall(지연시간, 실행할함수)는 "지정한 시간(ms) 뒤에 한 번만 함수를 실행해줘"라는 뜻이에요
+      this.time.delayedCall(i * 150, () => {
+        const ring = this.add.circle(x, y, 10, 0xffffff, 0); // 마지막 0은 채우기 투명도 - 테두리만 보이게
+        ring.setStrokeStyle(3, 0xffd76a, 1);
+
+        this.tweens.add({
+          targets: ring,
+          radius: 60, // 반지름이 점점 커짐
+          alpha: 0,
+          duration: 500,
+          onUpdate: () => ring.setStrokeStyle(3, 0xffd76a, ring.alpha), // 커지면서 테두리도 같이 옅어지게 함
+          onComplete: () => ring.destroy()
+        });
+      });
+    }
+
+    // 링 효과와 함께 반짝이는 파티클도 살짝 더 많이/화려하게 터뜨림
+    this.createParticleBurst(x, y, 0xffe066, 20);
   }
 
 
@@ -1694,12 +1872,18 @@ export class GameScene extends Phaser.Scene {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return;
 
+    // defense/critChance는 방어구/반지류 아이템이 새로 쓰는 effectType이에요.
+    // 스킬 쪽에서 이미 bonusStats.defense/critChance를 만들어뒀어서, 여기서도 그대로 재사용함
     if (item.effectType === 'attack') {
       this.bonusStats.attack += item.effectValue * direction;
     } else if (item.effectType === 'speed') {
       this.bonusStats.speed += item.effectValue * direction;
     } else if (item.effectType === 'maxHp') {
       this.bonusStats.maxHp += item.effectValue * direction;
+    } else if (item.effectType === 'defense') {
+      this.bonusStats.defense += item.effectValue * direction;
+    } else if (item.effectType === 'critChance') {
+      this.bonusStats.critChance += item.effectValue * direction;
     }
 
     this.recalculateDerivedStats();
