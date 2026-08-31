@@ -30,12 +30,14 @@ export const CLASS_TYPES = {
   archer: {
     name: '궁수', icon: '🏹',
     description: '빠른 몸놀림으로 치고 빠지는 원거리 전문가',
-    primaryStats: { str: 5, vit: 5, agi: 9, int: 2, sen: 4 }
+    primaryStats: { str: 5, vit: 5, agi: 9, int: 2, sen: 4 },
+    attackType: 'ranged' // 기본 공격이 근접이 아니라 원거리로 나감 (없으면 기본값 melee)
   },
   mage: {
     name: '마법사', icon: '🔮',
     description: '압도적인 공격력이지만 체력이 약함',
-    primaryStats: { str: 2, vit: 3, agi: 3, int: 14, sen: 3 }
+    primaryStats: { str: 2, vit: 3, agi: 3, int: 14, sen: 3 },
+    attackType: 'ranged'
   },
   priest: {
     name: '성직자', icon: '🕊️',
@@ -247,8 +249,21 @@ export const SHOP_ITEMS = [
   { id: 'ring_agility', name: '민첩의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 3, icon: null, maxDurability: 999 },
   { id: 'ring_power', name: '힘의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'attack', effectValue: 5, icon: null, maxDurability: 999 },
   // 목걸이
-  { id: 'necklace_vitality', name: '활력의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 30, icon: null, maxDurability: 999 },
+    { id: 'necklace_vitality', name: '활력의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 30, icon: null, maxDurability: 999 },
   { id: 'necklace_swift', name: '신속의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'speed', effectValue: 12, icon: null, maxDurability: 999 },
+
+  // 사냥터 보스 전용 레어 장비 - rareOnly:true는 상점에서 안 팔고 오직 사냥터 보스만 드랍한다는 표시예요
+  { id: 'rare_worn_charm', name: '낡은 부적', basePrice: 150, category: 'equipment', slot: 'necklace', effectType: 'attack', effectValue: 8, rareOnly: true, icon: null, maxDurability: 999 },
+  { id: 'rare_iron_blade', name: '고철 대검', basePrice: 300, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 15, rareOnly: true, icon: null, maxDurability: 60 },
+  { id: 'rare_swift_boots', name: '질풍의 장화', basePrice: 350, category: 'equipment', slot: 'shoes', effectType: 'speed', effectValue: 20, rareOnly: true, icon: null, maxDurability: 45 },
+  { id: 'rare_guardian_shield', name: '수호자의 방패', basePrice: 450, category: 'equipment', slot: 'shield', effectType: 'defense', effectValue: 12, rareOnly: true, icon: null, maxDurability: 60 },
+  { id: 'rare_hunters_ring', name: '사냥꾼의 반지', basePrice: 550, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 8, rareOnly: true, icon: null, maxDurability: 999 },
+    { id: 'rare_ancient_amulet', name: '고대의 부적', basePrice: 700, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 50, rareOnly: true, icon: null, maxDurability: 999 },
+
+  // 던전 최상위 등급(S/SS/SSS) 전용 레어 장비 - 사냥터보다 훨씬 강력함
+  { id: 'dungeon_rare_s', name: '천상의 검', basePrice: 900, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 25, rareOnly: true, icon: null, maxDurability: 80 },
+  { id: 'dungeon_rare_ss', name: '용의 비늘 갑옷', basePrice: 1200, category: 'equipment', slot: 'body', effectType: 'defense', effectValue: 20, rareOnly: true, icon: null, maxDurability: 90 },
+  { id: 'dungeon_rare_sss', name: '신화의 반지', basePrice: 1800, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 15, rareOnly: true, icon: null, maxDurability: 999 },
   { id: 'tree', name: '나무', basePrice: 5, category: 'resource', icon: null },
   { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
   { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
@@ -331,6 +346,7 @@ export const COMPANION_TYPES = {
     spriteKey: 'npc_villager3', // 실외의 떠돌이 여행자와 같은 그림을 임시로 재사용 (나중에 전용 그림으로 교체 예정)
     hireCost: 5000, // 0G 50S 0C
     attackBonus: 4,
+    maxHp: 80, // 동료의 최대 체력 - 이만큼 맞으면 기절함
     description: '함께 몬스터를 상대해주는 든든한 동료예요'
   }
 };
@@ -370,6 +386,50 @@ export const CLASS_ACTIVE_SKILLS = {
     description: '8초간 동료의 전투 보너스 데미지를 크게 증폭시켜요'
   }
 };
+
+// 사냥터 등급 정의예요. order는 등급 비교용 숫자(낮을수록 약함), color는 게이트 색깔,
+// monsterMultiplier는 이 등급에서 나오는 몬스터의 체력/공격력/속도를 몇 배로 강화할지,
+// bossHpMultiplier는 거기에 추가로 보스에게만 곱해지는 배율이에요.
+export const HUNTING_GROUND_RANKS = {
+  F: { name: 'F등급', order: 0, color: 0x9e9e9e, monsterMultiplier: 1.0, bossHpMultiplier: 3, rareDropChance: 15, rareItemId: 'rare_worn_charm' },
+  E: { name: 'E등급', order: 1, color: 0x4caf50, monsterMultiplier: 1.3, bossHpMultiplier: 3, rareDropChance: 20, rareItemId: 'rare_iron_blade' },
+  D: { name: 'D등급', order: 2, color: 0x2196f3, monsterMultiplier: 1.6, bossHpMultiplier: 3, rareDropChance: 25, rareItemId: 'rare_swift_boots' },
+  C: { name: 'C등급', order: 3, color: 0x9c27b0, monsterMultiplier: 2.0, bossHpMultiplier: 3, rareDropChance: 30, rareItemId: 'rare_guardian_shield' },
+  B: { name: 'B등급', order: 4, color: 0xff9800, monsterMultiplier: 2.5, bossHpMultiplier: 3, rareDropChance: 35, rareItemId: 'rare_hunters_ring' },
+  A: { name: 'A등급', order: 5, color: 0xf44336, monsterMultiplier: 3.2, bossHpMultiplier: 3, rareDropChance: 45, rareItemId: 'rare_ancient_amulet' }
+};
+
+// 사냥터 게이트 배치 목록이에요. 집/밭과 같은 패턴(위치 배열)이라, 나중에 등급을
+// 늘리고 싶으면 여기에 항목만 추가하면 돼요.
+export const HUNTING_GROUNDS = [
+  { id: 'gate_f', x: 230, y: 220, rank: 'F' },
+  { id: 'gate_c', x: 680, y: 300, rank: 'C' },
+  { id: 'gate_a', x: 450, y: 500, rank: 'A' }
+];
+
+// 던전 등급 정의예요. 사냥터(HUNTING_GROUND_RANKS)랑 같은 모양(shape)의 데이터라
+// 몬스터 생성 함수(createHuntMonster)를 그대로 같이 쓸 수 있어요. 다만 던전은 같은
+// 글자 등급이어도 사냥터보다 더 세게(예: F끼리 비교해도 던전이 더 강함) 잡아뒀고,
+// S/SS/SSS라는 사냥터에 없는 최상위 등급이 추가로 있어요.
+export const DUNGEON_RANKS = {
+  F: { name: 'F등급 던전', order: 0, color: 0x757575, monsterMultiplier: 1.3, bossHpMultiplier: 3, rareDropChance: 20, rareItemId: 'rare_worn_charm' },
+  E: { name: 'E등급 던전', order: 1, color: 0x009688, monsterMultiplier: 1.6, bossHpMultiplier: 3, rareDropChance: 25, rareItemId: 'rare_iron_blade' },
+  D: { name: 'D등급 던전', order: 2, color: 0x3f51b5, monsterMultiplier: 2.0, bossHpMultiplier: 3, rareDropChance: 30, rareItemId: 'rare_swift_boots' },
+  C: { name: 'C등급 던전', order: 3, color: 0x673ab7, monsterMultiplier: 2.5, bossHpMultiplier: 3, rareDropChance: 35, rareItemId: 'rare_guardian_shield' },
+  B: { name: 'B등급 던전', order: 4, color: 0xe91e63, monsterMultiplier: 3.2, bossHpMultiplier: 3, rareDropChance: 40, rareItemId: 'rare_hunters_ring' },
+  A: { name: 'A등급 던전', order: 5, color: 0xd32f2f, monsterMultiplier: 4.0, bossHpMultiplier: 3, rareDropChance: 45, rareItemId: 'rare_ancient_amulet' },
+  S: { name: 'S등급 던전', order: 6, color: 0xffd700, monsterMultiplier: 5.0, bossHpMultiplier: 4, rareDropChance: 40, rareItemId: 'dungeon_rare_s' },
+  SS: { name: 'SS등급 던전', order: 7, color: 0x00e5ff, monsterMultiplier: 6.5, bossHpMultiplier: 4, rareDropChance: 35, rareItemId: 'dungeon_rare_ss' },
+  SSS: { name: 'SSS등급 던전', order: 8, color: 0xff00ff, monsterMultiplier: 8.0, bossHpMultiplier: 5, rareDropChance: 30, rareItemId: 'dungeon_rare_sss' }
+};
+
+// 던전 입구 배치 목록이에요. 처음엔 3개(F/S/SSS)만 배치하고, 나머지 등급은
+// 나중에 이 배열에 항목만 추가하면 됨 (사냥터와 동일한 확장 패턴)
+export const DUNGEONS = [
+  { id: 'dungeon_f', x: 100, y: 350, rank: 'F' },
+  { id: 'dungeon_s', x: 750, y: 150, rank: 'S' },
+  { id: 'dungeon_sss', x: 400, y: 570, rank: 'SSS' }
+];
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
 // 집마다 다른 조합을 줄 수 있음. 새 집을 늘리려면 여기에 항목만 추가하고

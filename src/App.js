@@ -100,7 +100,7 @@ function App() {
   const [graphItemId, setGraphItemId] = useState(null);
   const [skillCooldownMs, setSkillCooldownMs] = useState(0);
 
-  const MAX_VISIBLE_LOGS = 4;
+  const MAX_VISIBLE_LOGS = 10;
 
   const addLog = (text, type) => {
     const id = Date.now() + Math.random();
@@ -302,24 +302,35 @@ function App() {
           pointerEvents: 'none',
           alignItems: 'flex-start'
         }}>
-          {logs.map(log => (
-            <div key={log.id} style={{
-              padding: '4px 10px',
-              borderRadius: '4px',
-              fontSize: '12px',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.2)',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
-              whiteSpace: 'nowrap',
-              backgroundColor:
-                log.type === 'kill' ? 'rgba(180,60,20,0.85)' :
-                  log.type === 'gain' ? 'rgba(40,120,60,0.85)' :
-                    log.type === 'death' ? 'rgba(150,0,0,0.9)' :
-                      'rgba(0,0,0,0.8)'
-            }}>
-              {log.text}
-            </div>
-          ))}
+          {logs.map((log, index) => {
+            // logs 배열은 오래된 순서대로 쌓여있어요(맨 뒤가 가장 최신). 그래서
+            // "최신으로부터 몇 번째로 오래됐는지"를 구하려면 뒤에서부터 거꾸로 세야 해요.
+            const distanceFromNewest = logs.length - 1 - index;
+            // 최근 5개(0~4)는 완전히 선명하게(1), 그 뒤부터는 하나씩 지날 때마다 0.2씩 흐려지다가
+            // Math.max(0, ...)로 0 밑으로는 안 내려가게 막아둠
+            const opacity = distanceFromNewest < 5 ? 1 : Math.max(0, 1 - (distanceFromNewest - 4) * 0.2);
+
+            return (
+              <div key={log.id} style={{
+                padding: '4px 10px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: 'white',
+                border: '1px solid rgba(255,255,255,0.2)',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
+                whiteSpace: 'nowrap',
+                opacity, // 계산한 흐림 정도를 그대로 적용
+                transition: 'opacity 0.3s', // 값이 바뀔 때 뚝 끊기지 않고 부드럽게 변하게 함
+                backgroundColor:
+                  log.type === 'kill' ? 'rgba(180,60,20,0.85)' :
+                    log.type === 'gain' ? 'rgba(40,120,60,0.85)' :
+                      log.type === 'death' ? 'rgba(150,0,0,0.9)' :
+                        'rgba(0,0,0,0.8)'
+              }}>
+                {log.text}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -581,16 +592,48 @@ function App() {
           <button onClick={() => sceneRef.current.revivePlayer()} style={{ ...buttonStyle, marginBottom: '10px', width: '100%' }}>
             부활 (HP 회복)
           </button>
-          <button
-            onClick={() => {
-              if (window.confirm('레벨과 직업을 정말 초기화할까요?')) {
-                sceneRef.current.resetProgress();
-              }
-            }}
-            style={{ ...buttonStyle, marginBottom: '10px', width: '100%', backgroundColor: '#7a3030' }}
-          >
-            레벨/직업 초기화
-          </button>
+
+          {/* 레벨 직접 입력 - useState로 입력창 값을 따로 관리해서, "적용" 버튼 누를 때만 실제로 반영되게 함 */}
+          <div style={{ marginBottom: '10px' }}>
+            <p style={{ fontSize: '12px', margin: '0 0 4px' }}>레벨 직접 설정</p>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <input
+                type="number"
+                min="1"
+                id="gm-level-input"
+                placeholder="레벨"
+                style={{ width: '70px', fontSize: '12px', padding: '4px', fontFamily: 'monospace' }}
+              />
+              <button
+                onClick={() => {
+                  // getElementById로 입력창의 지금 값을 직접 읽어와요 (별도 state 없이 간단하게 처리)
+                  const input = document.getElementById('gm-level-input');
+                  sceneRef.current.adminSetLevel(input.value);
+                }}
+                style={{ ...buttonStyle, fontSize: '11px', padding: '4px 10px' }}
+              >
+                적용
+              </button>
+            </div>
+          </div>
+
+          {/* 직업 변경 - 이미 직업이 있어도 카드를 누르면 즉시 바뀜 */}
+          <div style={{ marginBottom: '10px' }}>
+            <p style={{ fontSize: '12px', margin: '0 0 4px' }}>직업 변경</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+              {Object.entries(CLASS_TYPES).map(([classId, info]) => (
+                <button
+                  key={classId}
+                  onClick={() => sceneRef.current.adminSetClass(classId)}
+                  title={info.name}
+                  style={{ ...buttonStyle, fontSize: '16px', padding: '6px 0' }}
+                >
+                  {info.icon}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <p style={{ fontSize: '12px', color: '#a87878', margin: 0 }}>
             'P' 키로 패널 열기/닫기
           </p>
@@ -782,7 +825,10 @@ function App() {
 
               {playerStats.hiredCompanionId ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <span>현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}</span>
+                  <span>
+                    현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}
+                    {playerStats.companionClass && ` (${CLASS_TYPES[playerStats.companionClass]?.icon} ${CLASS_TYPES[playerStats.companionClass]?.name})`}
+                  </span>
                   <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
                     해고
                   </button>

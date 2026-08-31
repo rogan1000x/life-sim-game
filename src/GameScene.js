@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS } from './gameConfig';
+import { GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency, CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, HUNTING_GROUND_RANKS, HUNTING_GROUNDS, DUNGEON_RANKS, DUNGEONS } from './gameConfig';
 
 
 // Phaser의 Scene 클래스를 상속받아 우리 게임 전용 Scene을 만듦
@@ -122,6 +122,28 @@ export class GameScene extends Phaser.Scene {
     // update()에서 "지금 이 NPC랑 얼마나 가까운지" 매 프레임 거리 계산을 해야 하기 때문이에요.
     this.receptionistNpc = null;
 
+    // 사냥터 게이트 관련 상태예요.
+    this.gateObjects = {}; // 게이트 id별로 화면에 그려진 도형을 저장해둠
+    this.nearbyGate = null; // 지금 캐릭터와 가까운 게이트 (없으면 null)
+    // 게이트 id별로 "지금 그 게이트에서 스폰된 몬스터가 몇 마리 남았는지"를 저장해요.
+    // 0이거나 기록이 없으면(=처음이면) 다시 입장할 수 있고, 0보다 크면 이전 웨이브가
+    // 아직 안 끝난 거라 재입장을 막아요.
+    this.huntWaveCounts = {};
+
+    // 던전 관련 상태예요. 사냥터랑 다르게, 던전은 "같은 지도 위"가 아니라
+    // 완전히 다른 방(고정 좌표 400,300 근처)으로 이동하는 방식이에요.
+    this.dungeonGateObjects = {}; // 던전 입구 게이트들 (사냥터 게이트와 별개로 관리)
+    this.nearbyDungeonGate = null; // 지금 캐릭터와 가까운 던전 입구
+    this.isInsideDungeon = false; // 지금 던전 안에 있는지 여부
+    this.currentDungeonGate = null; // 어느 던전에 들어왔는지 (나갈 때 원래 입구 위치로 복귀하기 위함)
+    this.dungeonWaveRemaining = 0; // 던전 안에 남은 몬스터 수 (0이 되면 출구 문이 생김)
+    this.dungeonExitGate = null; // 클리어 후 생기는 출구 문 오브젝트
+
+    // 동료 성장 관련 상태예요. 전투에 참여할 때마다 경험치를 얻고, 레벨업하면
+    // 공격력/체력이 조금씩 늘어나요 (레벨 1당 공격력+2, 최대체력+10로 계산함)
+    this.companionLevel = 1;
+    this.companionExp = 0;
+
     // 지금 고용한 동료의 종류(id)예요. null이면 "동료 없음"이라는 뜻이에요.
     this.hiredCompanionId = null;
     // 실제로 화면에 그려진 동료 오브젝트예요. hiredCompanionId가 있어도, 아직
@@ -129,6 +151,20 @@ export class GameScene extends Phaser.Scene {
     // "고용했다는 기록"과 "지금 화면에 그려진 그림"이 서로 다른 타이밍에 필요하기 때문이에요 -
     // 예를 들어 저장 파일을 불러올 때는 기록은 있지만 그림은 아직 안 만들어진 상태예요)
     this.companionSprite = null;
+
+    // 동료에게 배정된 무작위 직업이에요 (고용할 때 한 번 정해지고, 저장/불러오기에도 유지됨).
+    // 이 값에 따라 동료가 자동으로 어떤 스킬을 쓸지 결정돼요.
+    this.companionClass = null;
+    // 동료가 주기적으로 자동 스킬을 쓰게 만드는 타이머예요. 해고하면 이 타이머도 정리해야 해요.
+    this.companionAutoSkillTimer = null;
+
+    // 동료의 지금 체력/최대 체력이에요. 고용할 때 maxHp로 채워지고, 몬스터에게 맞으면 줄어들어요.
+    this.companionHp = 0;
+    this.companionMaxHp = 0;
+    // 동료가 기절(KO) 상태인지 여부예요. 기절 중엔 화면에서 숨겨지고 공격/이동을 멈춰요.
+    this.companionKO = false;
+    // 동료의 독립적인 공격 쿨타임(다음 공격이 가능한 시각, this.time.now 기준)이에요.
+    this.companionAttackCooldownEnd = 0;
 
     // React와 연결하기 위한 콜백 함수들 (App.js에서 설정해줌)
     this.onStatsUpdate = null; // 상태가 바뀔 때마다 React에 알리는 함수
@@ -225,6 +261,7 @@ export class GameScene extends Phaser.Scene {
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
       if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
+      if (data.companionClass !== undefined) this.companionClass = data.companionClass;
       if (data.rank !== undefined) this.rank = data.rank;
       if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
       // 저장된 직업이 있으면 그대로 이어받음. 없으면 null 상태 그대로 두고,
@@ -325,6 +362,7 @@ export class GameScene extends Phaser.Scene {
     this.hKey = this.input.keyboard.addKey('H'); // 집 입장/퇴장 키
     this.fKey = this.input.keyboard.addKey('F'); // 밭 구매/심기/수확에 사용하는 키
     this.qKey = this.input.keyboard.addKey('Q'); // 액티브 스킬 발동 키
+    this.gKey = this.input.keyboard.addKey('G'); // 사냥터 게이트 입장 키
 
     this.physics.add.collider(this.player, this.entities);
 
@@ -336,14 +374,17 @@ export class GameScene extends Phaser.Scene {
       if (this.hp <= 0) return; // 이미 죽었으면 중복 데미지 방지
 
       // 밤에는 늑대의 공격력이 최대 1.5배까지 강해짐 (한밤중이 가장 위험)
+      // 사냥터 몬스터는 entity.customDamage에 강화된 공격력이 저장돼있어요
+      const baseDamageForHit = entity.customDamage ?? info.damage;
       const nightMultiplier = this.getNightMonsterMultiplier();
-      const rawDamage = Math.round(info.damage * nightMultiplier);
+      const rawDamage = Math.round(baseDamageForHit * nightMultiplier);
       // 방어력만큼 데미지를 깎아주되, Math.max(1, ...)로 최소 1은 항상 들어오게 함
       // (방어력이 아무리 높아도 완전 무적이 되지는 않게 하기 위함)
       const actualDamage = Math.max(1, rawDamage - this.defense);
       this.hp -= actualDamage;
       this.hp = Math.max(0, this.hp);
       this.hpText.setText('HP: ' + this.hp);
+      this.addLog(`${info.name}에게 ${actualDamage} 피해를 입음`, 'death');
       this.playHitSound();
 
       // 이 공격으로 사망했다면, 어떤 몬스터에게 당했는지 알림으로 남김
@@ -367,6 +408,11 @@ export class GameScene extends Phaser.Scene {
 
       this.syncStatsToReact();
     });
+
+    // 몬스터와 동료가 부딪혔을 때 동료가 데미지를 입도록 처리함 (동료도 이제 죽을 수 있는 존재가 됨)
+    // this.physics.add.overlap은 this.companionSprite가 아직 없을 수도 있는 시점에는 등록이 안 되니,
+    // 동료가 소환될 때마다 매번 새로 등록해줘야 해요 - 그래서 이 콜라이더는 spawnCompanion()에서 만들어요
+    // (아래 spawnCompanion 수정 참고)
 
     // NPC 생성 - 집(houses)과 동일한 패턴: 위치 배열 + 통합 함수로 몇 명이든 쉽게 추가 가능
     this.npcs = this.add.group();
@@ -419,6 +465,44 @@ export class GameScene extends Phaser.Scene {
         FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
       }
     });
+
+    // 사냥터 게이트들을 지도에 배치함. 등급별 색으로 원을 그려서, 색만 보고도 난이도를 알 수 있게 함
+    HUNTING_GROUNDS.forEach(gateConfig => {
+      const rankInfo = HUNTING_GROUND_RANKS[gateConfig.rank];
+
+      const gate = this.add.circle(gateConfig.x, gateConfig.y, 25, rankInfo.color);
+      gate.setStrokeStyle(3, 0xffffff, 0.8); // 흰 테두리를 둘러서 "게이트"라는 특별한 느낌을 줌
+
+      // 게이트 위에 등급 글자도 작게 표시해서, 색을 아직 못 외웠어도 바로 알 수 있게 함
+      const label = this.add.text(gateConfig.x, gateConfig.y, gateConfig.rank, {
+        fontSize: '18px', color: '#ffffff', fontStyle: 'bold'
+      });
+      label.setOrigin(0.5);
+
+      this.physics.add.existing(gate, true); // 정적 물리 바디 (통과 못 하고 부딪히게)
+      this.physics.add.collider(this.player, gate);
+
+      this.gateObjects[gateConfig.id] = { config: gateConfig, gateSprite: gate, label };
+      this.huntWaveCounts[gateConfig.id] = 0; // 처음엔 웨이브가 없으니 0으로 시작
+    });
+
+    // 던전 입구들을 지도에 배치함. 사냥터(원)와 헷갈리지 않도록 네모(사각형)로 구분함
+    DUNGEONS.forEach(dungeonConfig => {
+      const rankInfo = DUNGEON_RANKS[dungeonConfig.rank];
+
+      const gate = this.add.rectangle(dungeonConfig.x, dungeonConfig.y, 50, 50, rankInfo.color);
+      gate.setStrokeStyle(3, 0xffffff, 0.9);
+
+      const label = this.add.text(dungeonConfig.x, dungeonConfig.y, dungeonConfig.rank, {
+        fontSize: '14px', color: '#ffffff', fontStyle: 'bold'
+      });
+      label.setOrigin(0.5);
+
+      this.physics.add.existing(gate, true);
+      this.physics.add.collider(this.player, gate);
+
+      this.dungeonGateObjects[dungeonConfig.id] = { config: dungeonConfig, gateSprite: gate, label };
+    });
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, {
       fontSize: '20px',
       color: '#ff4444'
@@ -462,54 +546,50 @@ export class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this.hp <= 0) return; // 죽었으면 모든 조작 무시
 
-    this.updateGameClock(delta); // 실내/실외 상관없이 시간은 항상 흐르게 함
+    this.updateGameClock(delta); // 실내/실외/던전 상관없이 시간은 항상 흐르게 함
 
-    // 실내에 있을 때는 실외 관련 로직(몬스터 추적, 채집, NPC 상호작용)을 전부 건너뜀
+    // 집(House) 안에 있을 때만 이 분기로 빠짐 - 던전은 여기 안 들어가고 아래 공통 로직을 그대로 씀
+    // (던전은 몬스터가 있어야 하니, 몬스터 추적/공격 로직을 건너뛰면 안 되기 때문이에요)
     if (this.isInsideHouse) {
-      this.handleMovement(); // 실내에서도 이동은 가능해야 하니 별도 처리
-      this.checkHouseExit();  // H키로 나가는 것만 체크
-      this.handleReceptionistInteract(); // 길드 담당자와의 대화만 별도로 체크
+      this.handleMovement();
+      this.checkHouseExit();
+      this.handleReceptionistInteract();
       return;
     }
 
     this.handleMovement();
-    this.updateCompanionFollow(); // 동료가 있으면 플레이어를 따라오게 함
+    this.updateCompanionFollow(); // 동료는 실외/던전 어디서든 플레이어를 보호하며 싸움
 
-    // 액티브 스킬 쿨타임 남은 시간을 매 프레임 계산해서 React에 알려줌 (화면에 초 단위로 보여주기 위함)
-    // Math.max(0, ...)로 음수가 안 나오게 막아둠 (쿨타임 다 지나면 0에서 멈춤)
     const cooldownRemaining = Math.max(0, this.activeSkillCooldownEndTime - this.time.now);
     if (this.onCooldownUpdate) this.onCooldownUpdate(cooldownRemaining);
 
-    // Q키를 눌렀으면 액티브 스킬 발동을 시도함
     if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
       this.useActiveSkill();
     }
 
-    // 몬스터는 항상 플레이어를 추적
+    // 몬스터는 항상 플레이어를 추적함 (실외든 던전이든 동일하게 작동)
     this.entities.getChildren().forEach(entity => {
       if (!entity.active) return;
       const info = ENTITY_TYPES[entity.entityType];
       if (info.category === 'hostile_monster') {
         const nightMultiplier = this.getNightMonsterMultiplier();
+        const effectiveSpeed = entity.customSpeed ?? info.speed;
         const angle = Phaser.Math.Angle.Between(entity.x, entity.y, this.player.x, this.player.y);
         entity.body.setVelocity(
-          Math.cos(angle) * info.speed * nightMultiplier,
-          Math.sin(angle) * info.speed * nightMultiplier
+          Math.cos(angle) * effectiveSpeed * nightMultiplier,
+          Math.sin(angle) * effectiveSpeed * nightMultiplier
         );
 
         if (info.renderType === 'sprite') {
-          // 이미지가 고정된 방향(대각선 위쪽)을 보고 그려져 있어서, 이동 방향에 맞게 회전시켜 향하게 함
           entity.setRotation(angle + Phaser.Math.DegToRad(info.facingOffsetDeg));
-          entity.anims.play(`${entity.entityType}-run`, true); // true: 이미 재생 중이면 처음부터 다시 시작하지 않음
+          entity.anims.play(`${entity.entityType}-run`, true);
 
-          // 이미지 스프라이트는 setTint로 밤에 붉게 표시 (도형과 달리 setTint 사용 가능)
           if (this.nightIntensity > 0.3) {
             entity.setTint(0xff6666);
-          } else {
-            entity.clearTint();
+          } else if (!entity.isBoss) {
+            entity.clearTint(); // 보스는 항상 노란빛을 유지해야 하니, 밤이 아니어도 clearTint 안 함
           }
         } else {
-          // 도형(circle) 오브젝트는 setTint를 쓸 수 없어 setFillStyle로 색 자체를 바꿔야 함
           if (this.nightIntensity > 0.3) {
             entity.setFillStyle(0xff2222);
           } else {
@@ -527,26 +607,23 @@ export class GameScene extends Phaser.Scene {
         const distance = Phaser.Math.Distance.Between(
           this.player.x, this.player.y, entity.x, entity.y
         );
-        if (distance >= 100) return; // 상호작용 가능 거리 밖이면 무시
+        if (distance >= 100) return;
 
         const info = ENTITY_TYPES[entity.entityType];
 
+        // 던전 안에서는 자원 채집이 없다는 설정이라(몬스터만 있음), resource/passive_animal은
+        // 애초에 던전 안엔 스폰이 안 되니 이 조건은 자연스럽게 실외에서만 걸림
         if (info.category === 'resource' || info.category === 'passive_animal') {
-          // 자원/순한 동물은 한 번에 채집됨
-          // 채집 상태만 표시하고, 실제 숨김 처리는 refreshEntityVisual이 실내 여부까지 함께 판단
           entity.isHarvested = true;
           this.refreshEntityVisual(entity);
 
           this.addToInventory(entity.entityType);
           this.playSound(info.sound);
           this.gainExp(info.exp);
-          this.addLog(`${info.name} 획득 (상인에게 팔 수 있어요)`, 'gain');
+          this.addLog(`${info.name} +1 획득`, 'gain');
 
-          // 채집할 때 낮은 확률(15%)로 씨앗도 하나 덤으로 얻게 해줘요.
-          // Phaser.Math.Between(1, 100)은 1~100 사이의 정수를 무작위로 하나 뽑아주는 함수예요.
-          // 그 값이 15 이하일 확률은 정확히 15%이기 때문에, 이 if문이 참이 될 확률도 15%가 됨
           if (Phaser.Math.Between(1, 100) <= 15) {
-            const commonSeeds = ['wheat_seed', 'carrot_seed']; // 흔한 씨앗 중에서만 무작위로 하나 골라줌
+            const commonSeeds = ['wheat_seed', 'carrot_seed'];
             const randomIndex = Phaser.Math.Between(0, commonSeeds.length - 1);
             const bonusSeedId = commonSeeds[randomIndex];
 
@@ -557,48 +634,39 @@ export class GameScene extends Phaser.Scene {
 
           this.createParticleBurst(entity.x, entity.y, info.color);
 
-          // 일정 시간 후 다시 나타남 (리젠)
-          // 타이머 실행 시점에 실내에 있었더라도 refreshEntityVisual이 그 상태를 반영해줌
           setTimeout(() => {
             entity.isHarvested = false;
             this.refreshEntityVisual(entity);
           }, Phaser.Math.Between(5000, 15000));
 
-        } else if (info.category === 'hostile_monster') {
-          // 몬스터는 체력을 깎아야 처치됨
-          // 직업이 도적이고 지금이 밤(nightIntensity > 0.3)이라면, CLASS_TYPES에 있는
-          // nightAttackBonus만큼 공격력에 더 얹어줌. 다른 직업은 이 필드 자체가 없어서
-          // (undefined) || 0 을 붙여 자동으로 0이 되게 처리함
+        } else if (info.category === 'hostile_monster' && this.getPlayerAttackType() === 'melee') {
           const myClassInfo = this.playerClass ? CLASS_TYPES[this.playerClass] : null;
           const isNightBonusActive = myClassInfo?.nightAttackBonus && this.nightIntensity > 0.3;
           const baseAttackPower = this.attackPower + (isNightBonusActive ? myClassInfo.nightAttackBonus : 0);
 
-          // 정밀도/치명타를 반영해 최종 데미지를 계산함 (아래에 정의된 헬퍼 함수)
           const damageResult = this.calculateDamage(baseAttackPower);
           entity.hp -= damageResult.damage;
-          if (damageResult.isCrit) {
-            this.addLog('치명타!', 'kill');
-          }
+          this.addLog(
+            damageResult.isCrit ? `치명타! ${info.name}에게 ${damageResult.damage} 피해` : `${info.name}에게 ${damageResult.damage} 피해`,
+            'kill'
+          );
 
           this.playHitSound();
-          this.reduceWeaponDurability(); // 때릴 때마다 지금 낀 무기의 내구도를 깎음
-          this.createAttackSlashEffect(entity.x, entity.y); // 맞은 자리에 슬래시 이펙트 표시
+          this.reduceWeaponDurability();
+          this.createAttackSlashEffect(entity.x, entity.y);
 
-          // 동료가 있고, 지금 공격 중인 몬스터 근처(150px 이내)에 있다면 같이 데미지를 줌
           if (this.companionSprite) {
             const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
             const companionDistance = Phaser.Math.Distance.Between(
               this.companionSprite.x, this.companionSprite.y, entity.x, entity.y
             );
             if (companionDistance < 150) {
-              // 직업이 소환사면 CLASS_TYPES의 companionBonusMultiplier만큼 동료 데미지를 곱해줌
               const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
-              // "소환수 강화" 액티브 스킬이 아직 효과가 지속 중이면(companionBuffEndTime이 안 지났으면)
-              // buffMultiplier를 한 번 더 곱해서 일시적으로 훨씬 강해지게 함
               const isBuffActive = this.time.now < this.companionBuffEndTime;
               const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
+              const effectiveAttackBonus = COMPANION_TYPES[this.hiredCompanionId].attackBonus + (this.companionLevel - 1) * 2;
 
-              entity.hp -= companionInfo.attackBonus * companionMultiplier * buffMultiplier;
+              entity.hp -= effectiveAttackBonus * companionMultiplier * buffMultiplier;
             }
           }
 
@@ -607,79 +675,117 @@ export class GameScene extends Phaser.Scene {
           }
         }
       });
-    }
 
-    // NPC와의 거리를 매 프레임 확인
-    this.nearbyNpc = null;
-    this.npcs.getChildren().forEach(npc => {
-      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y);
-      // 캐릭터와 NPC 둘 다 80px 크기라, 충돌로 붙을 수 있는 최소 거리가 이미 80에 가까움
-      // 여유를 두기 위해 기준을 100으로 올림 (집의 상호작용 거리와 동일하게 맞춤)
-      if (distance < 100) {
-        this.nearbyNpc = npc;
-      }
-    });
-
-    // E키로 근처 NPC와 상호작용 - 대사를 보여주고, 상점을 가진 NPC라면 상점도 함께 엶
-    if (Phaser.Input.Keyboard.JustDown(this.eKey) && this.nearbyNpc) {
-      const npcType = this.nearbyNpc.npcType;
-      const info = NPC_DATA[npcType];
-
-      // 이전과 다른 NPC와 대화를 시작했다면 대사를 처음부터 다시 보여줌
-      if (this.lastDialogueNpc !== npcType) {
-        this.dialogueIndex = 0;
-        this.lastDialogueNpc = npcType;
-      }
-
-      if (this.onDialogue) {
-        this.onDialogue(info.dialogues[this.dialogueIndex]);
-
-        // 연속으로 말 걸었을 때 이전 대화창의 숨김 타이머가 늦게 실행되지 않도록 취소 후 재설정
-        if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
-        this.dialogueTimer = setTimeout(() => {
-          if (this.onDialogue) this.onDialogue(null);
-        }, 3000);
-      }
-      this.dialogueIndex = (this.dialogueIndex + 1) % info.dialogues.length;
-
-      // 상점을 가진 NPC(villager1)일 때만 상점도 함께 엶
-      if (info.hasShop && this.onShopToggle) {
-        this.onShopToggle();
+      if (this.getPlayerAttackType() === 'ranged') {
+        this.performRangedBasicAttack();
       }
     }
 
-    // 여러 집 중, 지금 캐릭터와 가장 가까운 집을 찾음
-    this.nearbyHouse = null;
-    this.houses.getChildren().forEach(house => {
-      const distance = Phaser.Math.Distance.Between(
-        this.player.x, this.player.y, house.x, house.y
-      );
-      if (distance < 100) {
-        this.nearbyHouse = house;
+    // 아래 상호작용들(NPC/집/밭/사냥터 게이트/던전 입구)은 던전 안에서는 전혀 필요 없으니,
+    // isInsideDungeon일 때는 통째로 건너뜀. 이렇게 안 하면 던전방 좌표(400,300 근처)가
+    // 실외의 다른 오브젝트 좌표랑 우연히 가까울 때 엉뚱하게 반응할 수 있어서 명확히 막아둠
+    if (!this.isInsideDungeon) {
+      this.nearbyNpc = null;
+      this.npcs.getChildren().forEach(npc => {
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y);
+        if (distance < 100) {
+          this.nearbyNpc = npc;
+        }
+      });
+
+      if (Phaser.Input.Keyboard.JustDown(this.eKey) && this.nearbyNpc) {
+        const npcType = this.nearbyNpc.npcType;
+        const info = NPC_DATA[npcType];
+
+        if (this.lastDialogueNpc !== npcType) {
+          this.dialogueIndex = 0;
+          this.lastDialogueNpc = npcType;
+        }
+
+        if (this.onDialogue) {
+          this.onDialogue(info.dialogues[this.dialogueIndex]);
+
+          if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
+          this.dialogueTimer = setTimeout(() => {
+            if (this.onDialogue) this.onDialogue(null);
+          }, 3000);
+        }
+        this.dialogueIndex = (this.dialogueIndex + 1) % info.dialogues.length;
+
+        if (info.hasShop && this.onShopToggle) {
+          this.onShopToggle();
+        }
       }
-    });
 
-    // H키로 집 안/밖 전환 (실내에 있을 때도 다시 눌러서 나갈 수 있음)
-    if (Phaser.Input.Keyboard.JustDown(this.hKey) && (this.nearbyHouse || this.isInsideHouse)) {
-      this.toggleHouse();
-    }
+      this.nearbyHouse = null;
+      this.houses.getChildren().forEach(house => {
+        const distance = Phaser.Math.Distance.Between(
+          this.player.x, this.player.y, house.x, house.y
+        );
+        if (distance < 100) {
+          this.nearbyHouse = house;
+        }
+      });
 
-    // 캐릭터와 가장 가까운 밭을 찾음 (집/NPC 찾을 때랑 똑같은 방식이에요)
-    this.nearbyFarmPlot = null;
-    FARM_PLOTS.forEach(plot => {
-      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, plot.x, plot.y);
-      if (distance < 80) {
-        this.nearbyFarmPlot = plot;
+      if (Phaser.Input.Keyboard.JustDown(this.hKey) && this.nearbyHouse) {
+        this.toggleHouse();
       }
-    });
 
-    // F키를 눌렀고, 근처에 밭이 있다면 그 밭과 상호작용함
-    // (구매/심기/수확 중 뭘 할지는 handleFarmInteract 안에서 밭 상태를 보고 알아서 결정함)
-    if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
-      this.handleFarmInteract(this.nearbyFarmPlot.id);
+      this.nearbyFarmPlot = null;
+      FARM_PLOTS.forEach(plot => {
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, plot.x, plot.y);
+        if (distance < 80) {
+          this.nearbyFarmPlot = plot;
+        }
+      });
+
+      if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
+        this.handleFarmInteract(this.nearbyFarmPlot.id);
+      }
+
+      // 사냥터 게이트 감지
+      this.nearbyGate = null;
+      HUNTING_GROUNDS.forEach(gateConfig => {
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, gateConfig.x, gateConfig.y);
+        if (distance < 100) {
+          this.nearbyGate = gateConfig;
+        }
+      });
+
+      // 던전 입구 감지
+      this.nearbyDungeonGate = null;
+      DUNGEONS.forEach(dungeonConfig => {
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, dungeonConfig.x, dungeonConfig.y);
+        if (distance < 100) {
+          this.nearbyDungeonGate = dungeonConfig;
+        }
+      });
+
+      // 던전 입구가 사냥터 게이트보다 안내 우선순위가 높게 함 (둘 다 가까울 일은 거의 없지만 안전하게)
+      if (this.nearbyDungeonGate) {
+        const rankInfo = DUNGEON_RANKS[this.nearbyDungeonGate.rank];
+        this.buildingNameText.setText(`${rankInfo.name} 입구 (G키로 입장)`);
+        this.buildingNameText.setVisible(true);
+      } else if (this.nearbyGate) {
+        const rankInfo = HUNTING_GROUND_RANKS[this.nearbyGate.rank];
+        this.buildingNameText.setText(`${rankInfo.name} 사냥터 게이트 (G키로 입장)`);
+        this.buildingNameText.setVisible(true);
+      } else {
+        this.buildingNameText.setVisible(false);
+      }
+
+      if (Phaser.Input.Keyboard.JustDown(this.gKey)) {
+        if (this.nearbyDungeonGate) {
+          this.enterDungeon(this.nearbyDungeonGate);
+        } else if (this.nearbyGate) {
+          this.enterHuntingGround(this.nearbyGate.id);
+        }
+      }
+    } else {
+      // 던전 안에 있을 때는 출구 문 상호작용만 체크함
+      this.handleDungeonExit();
     }
   }
-
   // ===== 아래는 게임에서 재사용되는 헬퍼 함수들 =====
 
   // 브라우저의 Web Audio API를 이용해 사운드 재생 (외부 파일 없이 코드로 소리 생성)
@@ -737,6 +843,7 @@ export class GameScene extends Phaser.Scene {
       equipmentDurability: this.equipmentDurability,
       activeQuestIds: this.activeQuestIds,
       hiredCompanionId: this.hiredCompanionId,
+      companionClass: this.companionClass,
       rank: this.rank, questsCompletedCount: this.questsCompletedCount,
       playerClass: this.playerClass,
       skillPoints: this.skillPoints, skillLevels: this.skillLevels,
@@ -770,7 +877,7 @@ export class GameScene extends Phaser.Scene {
   // 오브젝트가 화면에 보여야 하는지를 한 곳에서 판단
   // 실내에 있거나 채집/처치되어 리젠 대기 중이면 숨김 (두 조건을 한 함수로 합쳐 상태 충돌 방지)
   refreshEntityVisual(entity) {
-    const shouldHide = this.isInsideHouse || entity.isHarvested;
+    const shouldHide = this.isIndoors() || entity.isHarvested;
 
     entity.setVisible(!shouldHide);
     entity.setActive(!shouldHide);
@@ -790,8 +897,10 @@ export class GameScene extends Phaser.Scene {
       FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
 
       // 화면 위에 지금 들어온 건물의 이름을 표시함 (예: "주점", "내 집")
+      // (건물 진입 시엔 게이트 안내와 상관없이 무조건 건물 이름으로 덮어씀)
       this.buildingNameText.setText(info.name);
       this.buildingNameText.setVisible(true);
+      this.nearbyGate = null; // 실내에 있는 동안엔 게이트 관련 텍스트가 안 헷갈리게 초기화
 
       // 동료는 건물 안까지 따라 들어오지 않는다는 설정이라, 실내에서는 숨겨둠
       // (destroy로 아예 없애지는 않고, 다시 나갈 때 그대로 보이게 하기 위해 setVisible만 사용)
@@ -974,6 +1083,10 @@ export class GameScene extends Phaser.Scene {
     const info = COMPANION_TYPES[companionId];
     if (!info) return;
 
+    this.companionMaxHp = info.maxHp;
+    this.companionHp = info.maxHp; // 소환/재소환 시 항상 풀피로 시작
+    this.companionKO = false;
+
     // 플레이어 바로 왼쪽에서 시작하도록 배치함
     const spawnX = this.player.x - 60;
     const spawnY = this.player.y;
@@ -984,42 +1097,225 @@ export class GameScene extends Phaser.Scene {
 
     this.physics.add.existing(this.companionSprite); // 동적 물리 바디 (움직여야 하니 정적이 아님)
     this.companionSprite.body.setCollideWorldBounds(true);
+
+    // 몬스터와 부딪히면 동료가 데미지를 입도록 등록함. 동료를 새로 만들 때마다(재소환 포함)
+    // 매번 새로 등록해야 하는 이유는, 이전 companionSprite가 destroy되면 그 콜라이더도 같이 무효해지기 때문이에요.
+    this.physics.add.overlap(this.companionSprite, this.entities, (companionObj, entity) => {
+      const info = ENTITY_TYPES[entity.entityType];
+      if (info.category !== 'hostile_monster' || !entity.active) return;
+      if (this.companionKO) return; // 이미 기절해있으면 중복 데미지 방지
+
+      this.companionHp -= info.damage;
+      this.addLog(`동료가 ${info.name}에게 ${info.damage} 피해를 입음`, 'death');
+
+      if (this.companionHp <= 0) {
+        this.handleCompanionKO();
+      }
+    });
+
+    this.startCompanionAutoSkillTimer(); // 고용할 때든, 저장 파일을 불러와서 동료가 다시 소환될 때든 항상 호출됨
   }
 
-  // 매 프레임 호출돼서, 동료가 플레이어를 따라오게 만드는 함수예요.
-  updateCompanionFollow() {
-    if (!this.companionSprite) return; // 동료가 없으면 할 일이 없음
+  // 동료의 체력이 0이 되면 호출돼요. 영구히 사라지지 않고, 잠깐 기절했다가 자동으로 부활해요.
+  handleCompanionKO() {
+    this.companionKO = true;
+    this.companionSprite.setVisible(false);
+    this.companionSprite.body.enable = false;
 
-    const followDistance = 70; // 이 거리보다 가까우면 멈춤 (너무 붙어서 겹쳐 보이지 않게)
-    const distance = Phaser.Math.Distance.Between(
+    this.addLog('동료가 쓰러졌어요...', 'death');
+
+    // 15초 뒤 플레이어 옆에서 완전 회복 상태로 부활함
+    this.time.delayedCall(15000, () => {
+      if (!this.companionSprite) return; // 그사이 해고했을 수도 있으니 안전하게 확인
+      this.companionKO = false;
+      this.companionHp = this.companionMaxHp;
+      this.companionSprite.setVisible(true);
+      this.companionSprite.body.enable = true;
+      this.companionSprite.x = this.player.x - 60;
+      this.companionSprite.y = this.player.y;
+      this.addLog('동료가 다시 일어났어요', 'gain');
+    });
+  }
+
+  // 동료의 배정된 직업에 맞는 액티브 스킬 쿨타임 주기로, 자동 발동 타이머를 만들어요.
+  startCompanionAutoSkillTimer() {
+    // 혹시 이미 타이머가 돌고 있었다면(재소환 등) 먼저 정리하고 새로 만듦 - 타이머가 중복되지 않게
+    if (this.companionAutoSkillTimer) {
+      this.companionAutoSkillTimer.remove();
+      this.companionAutoSkillTimer = null;
+    }
+    if (!this.companionClass) return;
+
+    const skill = CLASS_ACTIVE_SKILLS[this.companionClass];
+    if (!skill) return;
+
+    this.companionAutoSkillTimer = this.time.addEvent({
+      delay: skill.cooldownMs,
+      loop: true,
+      callback: () => this.useCompanionAutoSkill()
+    });
+  }
+
+  // 동료가 배정된 직업에 맞춰 자동으로 스킬을 사용해요. 플레이어보다 약하게(고정 데미지 기반) 조정함
+  useCompanionAutoSkill() {
+    if (!this.companionSprite || !this.companionClass) return;
+
+    const skill = CLASS_ACTIVE_SKILLS[this.companionClass];
+    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+    if (!skill || !companionInfo) return;
+
+    // 동료는 근본 스탯이 없어서, 원래 갖고 있던 attackBonus를 기준으로 한 고정 데미지를 써요
+    const baseDamage = companionInfo.attackBonus * 3;
+
+    if (this.companionClass === 'warrior' || this.companionClass === 'archer' || this.companionClass === 'rogue') {
+      // 동료 위치 기준으로 가장 가까운 몬스터를 찾음 (findNearestMonster에 위치를 직접 넘겨줌)
+      const target = this.findNearestMonster(200, this.companionSprite.x, this.companionSprite.y);
+      if (!target) return;
+
+      const targetInfo = ENTITY_TYPES[target.entityType];
+      target.hp -= baseDamage;
+      this.createParticleBurst(target.x, target.y, 0xffe066, 10);
+      this.addLog(`동료의 ${skill.name}! ${baseDamage} 피해`, 'kill');
+
+      if (target.hp <= 0) this.defeatMonster(target, targetInfo);
+    } else if (this.companionClass === 'mage') {
+      const target = this.findNearestMonster(220, this.companionSprite.x, this.companionSprite.y);
+      if (!target) return;
+
+      this.createParticleBurst(target.x, target.y, 0xff6633, 14);
+
+      this.entities.getChildren().forEach(entity => {
+        if (!entity.active) return;
+        const info = ENTITY_TYPES[entity.entityType];
+        if (info.category !== 'hostile_monster') return;
+
+        const distance = Phaser.Math.Distance.Between(target.x, target.y, entity.x, entity.y);
+        if (distance <= 60) {
+          entity.hp -= baseDamage;
+          if (entity.hp <= 0) this.defeatMonster(entity, info);
+        }
+      });
+
+      this.addLog(`동료의 ${skill.name}! 광역 피해`, 'kill');
+    } else if (this.companionClass === 'priest') {
+      // 성직자 동료는 자동으로 플레이어를 치유해줌
+      const healAmount = Math.round(skill.healAmount / 2);
+      this.hp = Math.min(this.maxHp, this.hp + healAmount);
+      this.hpText.setText('HP: ' + this.hp);
+      this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 10);
+      this.addLog(`동료의 ${skill.name}! HP +${healAmount}`, 'gain');
+      this.syncStatsToReact();
+    } else if (this.companionClass === 'summoner') {
+      // 소환사 동료는 플레이어의 공격력을 잠시 강화해줌
+      const buffAmount = 5;
+      this.bonusStats.attack += buffAmount;
+      this.recalculateDerivedStats();
+      this.createParticleBurst(this.player.x, this.player.y, 0xc77dff, 10);
+      this.addLog(`동료의 ${skill.name}! 공격력이 잠시 강해졌어요`, 'gain');
+
+      // buffDurationMs 뒤에 다시 원래대로 되돌림
+      this.time.delayedCall(skill.buffDurationMs, () => {
+        this.bonusStats.attack -= buffAmount;
+        this.recalculateDerivedStats();
+        this.syncStatsToReact();
+      });
+
+      this.syncStatsToReact();
+    }
+  }
+
+  // 매 프레임 호출돼서, 동료의 행동(따라오기/전투/도망)을 전부 결정하는 함수예요.
+  // 우선순위: ① 자기 생존(체력 낮으면 도망) > ② 플레이어 보호(플레이어 위협 대상 공격) > ③ 능동 전투(주변 몬스터 선제 공격) > ④ 그냥 따라다니기
+  updateCompanionFollow() {
+    if (!this.companionSprite || this.companionKO) return; // 없거나 기절 중이면 할 일이 없음
+
+    const lowHpThreshold = this.companionMaxHp * 0.3; // 최대체력의 30% 밑이면 "위험한 상태"로 판단
+    const isLowHp = this.companionHp < lowHpThreshold;
+
+    // ① 자기 생존: 체력이 낮은데 근처(120px 이내)에 몬스터가 있으면, 그 몬스터로부터 반대 방향으로 도망침
+    if (isLowHp) {
+      const nearbyThreat = this.findNearestMonster(120, this.companionSprite.x, this.companionSprite.y);
+      if (nearbyThreat) {
+        // 몬스터 -> 동료 방향의 각도를 구해서, 그 방향 그대로 도망가면 몬스터에게서 멀어지게 됨
+        const fleeAngle = Phaser.Math.Angle.Between(nearbyThreat.x, nearbyThreat.y, this.companionSprite.x, this.companionSprite.y);
+        this.companionSprite.body.setVelocity(Math.cos(fleeAngle) * 190, Math.sin(fleeAngle) * 190);
+        this.updateCompanionFacing(this.companionSprite.x + Math.cos(fleeAngle), this.companionSprite.y + Math.sin(fleeAngle));
+        return; // 도망이 최우선이라, 아래의 다른 행동은 하지 않음
+      }
+    }
+
+    // ② 플레이어 보호: 플레이어 근처(180px 이내)에 몬스터가 있으면 그게 최우선 공격 대상이 됨
+    const threatToPlayer = this.findNearestMonster(180, this.player.x, this.player.y);
+    // ③ 능동 전투: 플레이어를 위협하는 몬스터가 없으면, 동료 자신 주변(220px)에서 먼저 찾아 공격함
+    const nearbyTarget = threatToPlayer || this.findNearestMonster(220, this.companionSprite.x, this.companionSprite.y);
+
+    if (nearbyTarget) {
+      const attackRange = 55; // 이 거리 안에 들어오면 "붙었다"고 판단하고 공격을 시작함
+      const distanceToTarget = Phaser.Math.Distance.Between(
+        this.companionSprite.x, this.companionSprite.y, nearbyTarget.x, nearbyTarget.y
+      );
+
+      if (distanceToTarget > attackRange) {
+        // 아직 안 붙었으면 대상 쪽으로 이동함
+        const angle = Phaser.Math.Angle.Between(this.companionSprite.x, this.companionSprite.y, nearbyTarget.x, nearbyTarget.y);
+        this.companionSprite.body.setVelocity(Math.cos(angle) * 200, Math.sin(angle) * 200);
+        this.updateCompanionFacing(nearbyTarget.x, nearbyTarget.y);
+      } else {
+        // 붙었으면 멈추고 공격 쿨타임을 확인해서 때림 (1초에 한 번 정도)
+        this.companionSprite.body.setVelocity(0, 0);
+        this.updateCompanionFacing(nearbyTarget.x, nearbyTarget.y);
+
+        if (this.time.now >= this.companionAttackCooldownEnd) {
+          this.companionBasicAttack(nearbyTarget);
+          this.companionAttackCooldownEnd = this.time.now + 1000;
+        }
+      }
+      return;
+    }
+
+    // ④ 공격할 대상이 아무도 없으면, 원래처럼 플레이어를 따라다님
+    const followDistance = 70;
+    const distanceToPlayer = Phaser.Math.Distance.Between(
       this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y
     );
 
-    if (distance > followDistance) {
-      const angle = Phaser.Math.Angle.Between(
-        this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y
-      );
-      const speed = 180; // 플레이어 기본 이동속도(200)보다 살짝 느리게 해서 자연스럽게 뒤처지는 느낌을 줌
-
-      this.companionSprite.body.setVelocity(
-        Math.cos(angle) * speed,
-        Math.sin(angle) * speed
-      );
-
-      // 이동 방향에 따라 동료도 플레이어와 같은 방식(directionFrames)으로 프레임을 바꿔줌
-      // Math.abs()는 절댓값(부호를 뗀 값)을 구하는 함수예요. 가로/세로 중 어느 쪽으로 더 많이
-      // 움직이는지를 비교해서, 더 큰 쪽을 기준으로 방향을 정함
-      const dx = this.player.x - this.companionSprite.x;
-      const dy = this.player.y - this.companionSprite.y;
-
-      if (Math.abs(dx) > Math.abs(dy)) {
-        this.companionSprite.setFrame(dx > 0 ? this.directionFrames.right : this.directionFrames.left);
-      } else {
-        this.companionSprite.setFrame(dy > 0 ? this.directionFrames.down : this.directionFrames.up);
-      }
+    if (distanceToPlayer > followDistance) {
+      const angle = Phaser.Math.Angle.Between(this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y);
+      this.companionSprite.body.setVelocity(Math.cos(angle) * 180, Math.sin(angle) * 180);
+      this.updateCompanionFacing(this.player.x, this.player.y);
     } else {
-      this.companionSprite.body.setVelocity(0, 0); // 충분히 가까우면 멈춤
+      this.companionSprite.body.setVelocity(0, 0);
     }
+  }
+
+  // 동료가 (targetX, targetY) 방향을 보도록 프레임을 바꿔줘요. 이동/도망/공격 등 여러 상황에서
+  // 공통으로 방향 전환이 필요해서 별도 함수로 뽑았어요.
+  updateCompanionFacing(targetX, targetY) {
+    const dx = targetX - this.companionSprite.x;
+    const dy = targetY - this.companionSprite.y;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      this.companionSprite.setFrame(dx > 0 ? this.directionFrames.right : this.directionFrames.left);
+    } else {
+      this.companionSprite.setFrame(dy > 0 ? this.directionFrames.down : this.directionFrames.up);
+    }
+  }
+
+  // 동료의 독립적인 기본 공격이에요 (플레이어 스페이스바와 무관하게, 붙어있으면 알아서 때림)
+  companionBasicAttack(target) {
+    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+    const targetInfo = ENTITY_TYPES[target.entityType];
+    if (!companionInfo) return;
+
+    const isBuffActive = this.time.now < this.companionBuffEndTime;
+    const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
+    const damage = Math.round(companionInfo.attackBonus * 2 * buffMultiplier);
+
+    target.hp -= damage;
+    this.addLog(`동료가 ${targetInfo.name}에게 ${damage} 피해`, 'kill');
+    this.createParticleBurst(target.x, target.y, 0xffe066, 6);
+
+    if (target.hp <= 0) this.defeatMonster(target, targetInfo);
   }
 
   // 주점에서 동료를 고용할 때 호출돼요.
@@ -1039,9 +1335,16 @@ export class GameScene extends Phaser.Scene {
 
     this.gold -= info.hireCost;
     this.hiredCompanionId = companionId;
-    this.spawnCompanion(companionId);
 
-    this.addLog(`${info.name}을(를) 고용했어요!`, 'gain');
+    // 동료에게 6개 직업 중 하나를 무작위로 배정해요. Object.keys()로 직업 id 목록을
+    // 배열로 뽑고, Phaser.Math.Between으로 그 배열의 인덱스를 하나 무작위로 골라요.
+    const classIds = Object.keys(CLASS_TYPES);
+    this.companionClass = classIds[Phaser.Math.Between(0, classIds.length - 1)];
+
+    this.spawnCompanion(companionId); // 이 안에서 자동 스킬 타이머도 같이 시작됨
+
+    const assignedClassInfo = CLASS_TYPES[this.companionClass];
+    this.addLog(`${info.name}을(를) 고용했어요! (${assignedClassInfo.icon} ${assignedClassInfo.name})`, 'gain');
     this.syncStatsToReact();
   }
 
@@ -1055,7 +1358,20 @@ export class GameScene extends Phaser.Scene {
       this.companionSprite.destroy();
       this.companionSprite = null;
     }
+
+    // 타이머를 remove()로 확실히 멈추지 않으면, 동료가 없어진 뒤에도 계속 돌면서
+    // useCompanionAutoSkill()이 매번 헛되이 호출될 수 있어요 (안에서 companionSprite가
+    // null이라 아무 일도 안 하긴 하지만, 굳이 계속 도는 건 낭비라 확실히 정리함)
+    if (this.companionAutoSkillTimer) {
+      this.companionAutoSkillTimer.remove();
+      this.companionAutoSkillTimer = null;
+    }
+
     this.hiredCompanionId = null;
+    this.companionClass = null;
+    this.companionHp = 0;
+    this.companionMaxHp = 0;
+    this.companionKO = false;
 
     this.addLog(`${info.name}과(와) 헤어졌어요`, 'info');
     this.syncStatsToReact();
@@ -1096,6 +1412,7 @@ export class GameScene extends Phaser.Scene {
         // [...배열] 은 배열을 새로 복사하는 문법이에요 ({...객체}랑 비슷한 원리예요)
         activeQuestIds: [...this.activeQuestIds],
         hiredCompanionId: this.hiredCompanionId,
+        companionClass: this.companionClass,
         rank: this.rank,
         questsCompletedCount: this.questsCompletedCount,
         playerClass: this.playerClass,
@@ -1116,6 +1433,7 @@ export class GameScene extends Phaser.Scene {
 
   // 경험치 획득 + 레벨업 처리 (레벨업 시 HP 풀회복, 스탯 포인트 지급)
   gainExp(amount) {
+    this.addLog(`+${amount} EXP`, 'gain'); // 경험치를 얻을 때마다 매번 숫자로 표시
     this.exp += amount;
     const expNeeded = this.level * 100;
 
@@ -1207,39 +1525,35 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // Admin 패널의 초기화 버튼용 - 레벨/경험치/스탯포인트/직업을 전부 처음 상태로 되돌림.
-  // 골드/인벤토리/장비/퀘스트 진행도/동료 등은 건드리지 않고, "성장 관련 수치"만 리셋함
-  // (다른 직업으로 다시 테스트해보고 싶을 때 쓰기 좋아요)
-  resetProgress() {
-    this.level = 1;
+  // GM 전용 - 레벨을 직접 원하는 숫자로 바꿔요. 경험치는 0으로 초기화해서 다음
+  // 레벨업까지 얼마나 필요한지 헷갈리지 않게 함. 스탯 포인트/스킬 포인트는 건드리지 않음
+  // (이미 갖고 있던 포인트를 잃지 않게 하기 위함)
+  adminSetLevel(newLevel) {
+    // Number()로 문자열을 숫자로 바꾸고, Math.max(1, ...)로 1보다 작은 값은 못 넣게 막음
+    const level = Math.max(1, Math.floor(Number(newLevel)));
+    if (isNaN(level)) return; // 숫자가 아닌 값이 들어오면 무시
+
+    this.level = level;
     this.exp = 0;
-    this.statPoints = 0;
-    this.playerClass = null; // 직업도 다시 null로 되돌려서, 주점에서 다시 고를 수 있게 함
 
-    // 근본 스탯 5종이에요. 다 0에서 시작하고, statPoints로 하나씩 투자해서 올려요.
-    this.primaryStats = { str: 0, vit: 0, agi: 0, int: 0, sen: 0 };
+    this.addLog(`GM: 레벨이 ${level}(으)로 변경됐어요`, 'info');
+    this.syncStatsToReact();
+  }
 
-    // 장비/스킬이 주는 "고정 보너스"만 따로 모아두는 곳이에요. 근본 스탯과 분리해서
-    // 관리하는 이유는, 근본 스탯이 바뀔 때마다 최종 스탯을 처음부터 다시 계산해야
-    // 하는데, 그때 장비/스킬 보너스까지 같이 더해줘야 하기 때문이에요.
-    this.bonusStats = { attack: 0, speed: 0, maxHp: 0 };
+  // GM 전용 - 직업을 자유롭게 바꿔요. chooseClass()와 달리 이미 직업이 있어도 막지 않고
+  // 바로 덮어씀. 새 직업의 근본 스탯 배분으로 초기화되고, 체력은 새 최대치로 꽉 채워짐
+  adminSetClass(classId) {
+    const classInfo = CLASS_TYPES[classId];
+    if (!classInfo) return;
 
-    // 아래 값들은 전부 recalculateDerivedStats()가 계산해서 채워주는 "결과 값"이에요.
-    // 처음엔 일단 기본값으로 시작하고, create()에서 한 번 재계산됨
-    this.attackPower = 10;
-    this.maxHp = 100;
-    this.moveSpeed = 200;
-    this.hp = 100;
-    this.defense = 0;       // 방어력 - 몬스터 데미지를 이만큼 깎아줌
-    this.critChance = 0;    // 치명타 확률(%) - 민첩으로 오름
-    this.critDamage = 150;  // 치명타 데미지 배율(%) - 150이면 1.5배
-    this.magicPower = 0;    // 마력 - 지금은 쓰는 곳 없음, 나중에 액티브 스킬에서 사용 예정
-    this.cooldownReduction = 0; // 재사용 대기시간 감소(%) - 지금은 쓰는 곳 없음
-    this.precision = 0;     // 정밀도 - 공격 데미지의 최소 하한선을 끌어올림
+    this.playerClass = classId;
+    this.primaryStats = { ...classInfo.primaryStats };
 
+    this.recalculateDerivedStats();
+    this.hp = this.maxHp;
     if (this.hpText) this.hpText.setText('HP: ' + this.hp);
 
-    this.addLog('레벨과 직업이 초기화되었어요', 'info');
+    this.addLog(`GM: 직업이 ${classInfo.name}(으)로 변경됐어요`, 'info');
     this.syncStatsToReact();
   }
 
@@ -1436,17 +1750,33 @@ export class GameScene extends Phaser.Scene {
   // 몬스터가 죽었을 때 공통으로 처리하는 함수예요. 기존엔 스페이스바 공격 코드 안에만 있던
   // 내용인데, 액티브 스킬로도 몬스터를 죽일 수 있게 되면서 두 곳에서 재사용하려고 분리했어요.
   defeatMonster(entity, info) {
-    entity.isHarvested = true;
-    this.refreshEntityVisual(entity);
-
     this.addToInventory(entity.entityType);
-    this.gainExp(info.exp);
     this.totalMonsterKills++;
 
     this.checkNewlyUnlockedSkills();
 
-    this.addLog(`${info.name} 처치! (+${info.exp} EXP, 상인에게 팔 수 있어요)`, 'kill');
+    this.addLog(`${info.name} 처치!`, 'kill');
+    this.addLog(`${info.name} +1 획득`, 'gain');
+    this.gainExp(info.exp);
     this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
+
+    // 사냥터/던전 웨이브로 스폰된 몬스터는 일반 늑대 풀과 완전히 분리해서 처리함:
+    // 리젠 없이 그대로 사라지고, 보스라면 레어 아이템 드랍도 여기서 체크함
+    if (entity.encounterType === 'hunt') {
+      if (entity.isBoss) {
+        this.tryDropRareItem(entity.encounterRankInfo);
+      }
+      entity.destroy();
+      this.huntWaveCounts[entity.encounterGateId] = Math.max(0, this.huntWaveCounts[entity.encounterGateId] - 1);
+      if (this.huntWaveCounts[entity.encounterGateId] === 0) {
+        this.addLog('사냥터 클리어!', 'gain');
+      }
+      return;
+    }
+    
+    // 일반 늑대는 기존처럼 채집 대기 상태로 숨겼다가 일정 시간 뒤 리스폰됨
+    entity.isHarvested = true;
+    this.refreshEntityVisual(entity);
 
     setTimeout(() => {
       entity.hp = entity.maxHp;
@@ -1457,8 +1787,93 @@ export class GameScene extends Phaser.Scene {
     }, Phaser.Math.Between(GAME_CONFIG.wolfRespawnMin, GAME_CONFIG.wolfRespawnMax));
   }
 
+  // 사냥터 게이트에 입장했을 때(G키) 호출돼요. 등급에 맞는 강화된 몬스터 무리를 그 자리에 스폰함
+  enterHuntingGround(gateId) {
+    const gateObj = this.gateObjects[gateId];
+    if (!gateObj) return;
+
+    // 이전 웨이브가 아직 안 끝났으면 재입장을 막음
+    if (this.huntWaveCounts[gateId] > 0) {
+      this.addLog('아직 이전 웨이브가 남아있어요', 'info');
+      return;
+    }
+
+    const rankInfo = HUNTING_GROUND_RANKS[gateObj.config.rank];
+    const gateX = gateObj.config.x;
+    const gateY = gateObj.config.y;
+
+    const normalCount = 4;
+    let spawnedCount = 0;
+
+    // 일반 몬스터 4마리를 게이트 주변에 흩뿌려서 스폰함
+    for (let i = 0; i < normalCount; i++) {
+      // 게이트 중심에서 반지름 80~150 사이의 무작위 위치에 스폰 (게이트 바로 위에 겹치지 않게)
+      const spawnAngle = Math.random() * Math.PI * 2;
+      const spawnRadius = Phaser.Math.Between(80, 150);
+      const spawnX = gateX + Math.cos(spawnAngle) * spawnRadius;
+      const spawnY = gateY + Math.sin(spawnAngle) * spawnRadius;
+
+      const monster = this.createHuntMonster('wolf', spawnX, spawnY, rankInfo, gateId, false, 'hunt');
+      this.entities.add(monster);
+      spawnedCount++;
+    }
+
+    // 보스 1마리 추가 스폰
+    const bossMonster = this.createHuntMonster('wolf', gateX, gateY - 100, rankInfo, gateId, true, 'hunt');
+    this.entities.add(bossMonster);
+    spawnedCount++;
+
+    this.huntWaveCounts[gateId] = spawnedCount;
+    this.addLog(`${rankInfo.name} 사냥터 입장! 몬스터 ${spawnedCount}마리 출현`, 'info');
+  }
+
+  // 사냥터 전용 강화 몬스터를 하나 만들어줘요. 기존 createEntity를 그대로 활용하되,
+  // 만든 뒤에 체력/공격력/속도를 등급 배율만큼 올리고 사냥터 전용 표시(isHuntMonster)를 붙여요.
+  // encounterType: 'hunt'(사냥터) 또는 'dungeon'(던전) - defeatMonster()에서 이 값을 보고
+  // 처치 후 처리 방식을 다르게 분기해요 (사냥터는 리젠 없이 그 자리 소멸, 던전은 웨이브 카운트 감소)
+  createHuntMonster(typeKey, x, y, rankInfo, gateId, isBoss, encounterType) {
+    const baseInfo = ENTITY_TYPES[typeKey];
+    const monster = this.createEntity(x, y, typeKey);
+
+    const multiplier = rankInfo.monsterMultiplier * (isBoss ? rankInfo.bossHpMultiplier : 1);
+
+    monster.hp = Math.round(baseInfo.hp * multiplier);
+    monster.maxHp = monster.hp;
+    monster.customDamage = Math.round(baseInfo.damage * rankInfo.monsterMultiplier);
+    monster.customSpeed = baseInfo.speed;
+
+    monster.encounterType = encounterType; // 'hunt' 또는 'dungeon'
+    monster.encounterGateId = gateId;
+    monster.encounterRankInfo = rankInfo; // 드랍 계산 등에서 바로 쓸 수 있게 rankInfo 자체를 저장해둠
+    monster.isBoss = isBoss;
+
+    if (isBoss) {
+      monster.setScale((monster.spriteScale || monster.scale || 1) * 1.6);
+      monster.setTint(0xffcc00);
+    }
+
+    return monster;
+  }
+
+  // 보스를 잡았을 때, 등급에 설정된 확률로 레어 아이템을 드랍함
+  tryDropRareItem(huntRank) {
+    const rankInfo = HUNTING_GROUND_RANKS[huntRank];
+    if (!rankInfo) return;
+
+    const roll = Phaser.Math.Between(1, 100);
+    if (roll > rankInfo.rareDropChance) return; // 확률에 못 들면 그냥 아무 일도 안 일어남
+
+    const rareItem = SHOP_ITEMS.find(i => i.id === rankInfo.rareItemId);
+    if (!rareItem) return;
+
+    this.addToInventory(rareItem.id);
+    this.addLog(`✨ 레어 아이템 획득: ${rareItem.name}!`, 'gain');
+  }
+
   // maxRange 안에서 가장 가까운 몬스터 하나를 찾아줘요. 없으면 null을 돌려줌.
-  findNearestMonster(maxRange) {
+  // fromX/fromY를 안 넘기면 기본값으로 플레이어 위치를 기준으로 찾고,
+  // 동료처럼 다른 위치를 기준으로 찾고 싶을 때는 이 값을 직접 넘겨주면 돼요.
+  findNearestMonster(maxRange, fromX = this.player.x, fromY = this.player.y) {
     let nearest = null;
     let nearestDistance = maxRange;
 
@@ -1467,7 +1882,7 @@ export class GameScene extends Phaser.Scene {
       const info = ENTITY_TYPES[entity.entityType];
       if (info.category !== 'hostile_monster') return;
 
-      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, entity.x, entity.y);
+      const distance = Phaser.Math.Distance.Between(fromX, fromY, entity.x, entity.y);
       if (distance < nearestDistance) {
         nearest = entity;
         nearestDistance = distance;
@@ -1475,6 +1890,60 @@ export class GameScene extends Phaser.Scene {
     });
 
     return nearest;
+  }
+
+  // 지금 직업의 기본 공격 방식이 'ranged'(원거리)인지 'melee'(근접)인지 알려줘요.
+  // 직업이 없거나 attackType이 정의 안 돼있으면 기본값으로 melee 취급함
+  getPlayerAttackType() {
+    if (!this.playerClass) return 'melee';
+    return CLASS_TYPES[this.playerClass]?.attackType || 'melee';
+  }
+
+  // 원거리 직업(궁수/마법사)의 기본 공격이에요. 스페이스바를 눌렀을 때 근접 대신 이게 실행돼요.
+  // 가장 가까운 몬스터에게 투사체를 날려서, 도착하면 데미지를 줌
+  performRangedBasicAttack() {
+    const range = 260; // 근접(100)보다 훨씬 넓은 사거리
+    const target = this.findNearestMonster(range);
+
+    if (!target) {
+      this.addLog('사거리 안에 몬스터가 없어요', 'info');
+      return;
+    }
+
+    const targetInfo = ENTITY_TYPES[target.entityType];
+    const targetX = target.x;
+    const targetY = target.y; // 발사 시점의 위치를 스냅샷으로 저장 (날아가는 동안 몬스터가 움직여도 이 위치로 날아감)
+
+    // 마법사는 보라색 마법구, 궁수는 갈색 화살(원으로 단순화)로 색을 다르게 함
+    const projectileColor = this.playerClass === 'mage' ? 0xc77dff : 0x8b5a2b;
+    const projectile = this.add.circle(this.player.x, this.player.y, 6, projectileColor);
+
+    const travelDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, targetX, targetY);
+    // 거리가 멀수록 날아가는 데 시간이 더 걸리게 함 (최소 100ms는 보장)
+    const travelDuration = Math.max(100, travelDistance * 1.5);
+
+    this.tweens.add({
+      targets: projectile,
+      x: targetX,
+      y: targetY,
+      duration: travelDuration,
+      onComplete: () => {
+        projectile.destroy();
+        if (!target.active) return; // 날아가는 동안 몬스터가 이미 다른 이유로 죽었으면 그냥 허공에 사라짐
+
+        const damageResult = this.calculateDamage(this.attackPower);
+        target.hp -= damageResult.damage;
+        this.addLog(
+          damageResult.isCrit ? `치명타! ${targetInfo.name}에게 ${damageResult.damage} 피해` : `${targetInfo.name}에게 ${damageResult.damage} 피해`,
+          'kill'
+        );
+
+        this.createParticleBurst(target.x, target.y, projectileColor, 8);
+        this.reduceWeaponDurability();
+
+        if (target.hp <= 0) this.defeatMonster(target, targetInfo);
+      }
+    });
   }
 
   // Q키를 눌렀을 때 실제로 실행되는 함수예요. 직업마다 완전히 다른 동작을 하기 때문에
@@ -1621,6 +2090,16 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
+  // 아이템 id로 사람이 읽을 이름을 찾아줘요. SHOP_ITEMS나 ENTITY_TYPES 어느 쪽에 있어도 찾아냄
+  // (App.js의 getItemDisplayName과 같은 역할을 하는 GameScene 쪽 버전이에요)
+  getItemDisplayNameForLog(itemId) {
+    const shopItem = SHOP_ITEMS.find(i => i.id === itemId);
+    if (shopItem) return shopItem.name;
+    const entityItem = ENTITY_TYPES[itemId];
+    if (entityItem) return entityItem.name;
+    return itemId;
+  }
+
   // 퀘스트를 수락해요. includes()는 "배열 안에 이 값이 있는지" 확인해주는 함수예요.
   acceptQuest(questId) {
     if (this.activeQuestIds.includes(questId)) return; // 이미 수락한 퀘스트면 중복 수락 안 되게 막음
@@ -1660,6 +2139,7 @@ export class GameScene extends Phaser.Scene {
     // 필요한 개수만큼 인벤토리에서 빼줘요
     this.inventory[quest.targetId] -= quest.targetCount;
     if (this.inventory[quest.targetId] <= 0) delete this.inventory[quest.targetId];
+    this.addLog(`${this.getItemDisplayNameForLog(quest.targetId)} -${quest.targetCount} (퀘스트 제출)`, 'info');
 
     this.gold += quest.rewardGold;
 
@@ -1825,6 +2305,25 @@ export class GameScene extends Phaser.Scene {
     if (item.effectType === 'heal') {
       this.hp = Math.min(this.maxHp, this.hp + item.effectValue * useQty);
       this.hpText.setText('HP: ' + this.hp);
+    }
+
+    this.syncStatsToReact();
+  } useItem(itemId, quantity = 1) {
+    if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
+
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item || item.category !== 'consumable') return;
+
+    const useQty = Math.min(quantity, this.inventory[itemId]);
+    this.inventory[itemId] -= useQty;
+
+    if (item.effectType === 'heal') {
+      const healedAmount = Math.min(this.maxHp - this.hp, item.effectValue * useQty);
+      this.hp = Math.min(this.maxHp, this.hp + item.effectValue * useQty);
+      this.hpText.setText('HP: ' + this.hp);
+      this.addLog(`${item.name} ${useQty}개 사용 (HP +${healedAmount})`, 'gain');
+    } else {
+      this.addLog(`${item.name} ${useQty}개 사용`, 'info');
     }
 
     this.syncStatsToReact();
@@ -2046,7 +2545,7 @@ export class GameScene extends Phaser.Scene {
 
     // 실내에 있을 때는 밭 관련 그림을 전부 숨기고 여기서 함수를 끝내요.
     // (entities에서 쓰는 refreshEntityVisual과 똑같은 패턴이에요)
-    if (this.isInsideHouse) {
+    if (this.isIndoors()) {
       farmObj.plotSprite.setVisible(false);
       farmObj.priceLabel.setVisible(false);
       if (farmObj.cropSprite) farmObj.cropSprite.setVisible(false);
@@ -2181,7 +2680,7 @@ export class GameScene extends Phaser.Scene {
     if (this.onFarmMenuOpen) this.onFarmMenuOpen(null); // React 쪽 심기 메뉴를 닫아달라고 알림 (null = "닫아줘")
 
     const cropInfo = CROP_TYPES[seedItem.cropType];
-    this.addLog(`${cropInfo.name} 씨앗을 심었어요`, 'gain');
+    this.addLog(`${seedItem.name} -1 (심음)`, 'info');
     this.refreshFarmPlotVisual(plotId);
     this.syncStatsToReact();
   }
@@ -2225,4 +2724,3 @@ export class GameScene extends Phaser.Scene {
     return house;
   }
 }
-
