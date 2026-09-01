@@ -340,14 +340,42 @@ export const QUEST_TEMPLATES = [
 
 // 고용 가능한 동료 목록이에요. hireCost는 다른 가격들처럼 "구리 단위" 숫자고,
 // attackBonus는 전투 중 동료가 근처에 있을 때 몬스터에게 추가로 주는 데미지예요.
+// 동료들이에요. 새 전용 그림을 구하기 전까지는 같은 스프라이트(npc_villager3)를 재사용하되,
+// tintColor(색조)를 다르게 입혀서 최소한의 외형 구분이 되게 해뒀어요.
+// trait는 각자의 개성 있는 특성이에요. type에 따라 GameScene에서 다르게 적용돼요:
+// 'critBonus' - 가끔(value%) 추가 피해가 터짐 / 'damageReduction' - 받는 피해를 value%만큼 줄임
+// 'expBonus' - 얻는 경험치를 value배로 늘림 (성장이 빨라짐)
 export const COMPANION_TYPES = {
-  traveler: {
-    name: '떠돌이 동료',
-    spriteKey: 'npc_villager3', // 실외의 떠돌이 여행자와 같은 그림을 임시로 재사용 (나중에 전용 그림으로 교체 예정)
-    hireCost: 5000, // 0G 50S 0C
-    attackBonus: 4,
-    maxHp: 80, // 동료의 최대 체력 - 이만큼 맞으면 기절함
-    description: '함께 몬스터를 상대해주는 든든한 동료예요'
+  roy: {
+    name: '로이', personality: '성실한 여행자',
+    spriteKey: 'npc_villager3', tintColor: 0xffffff, // 원래 색 그대로 (기준점 역할)
+    hireCost: 5000, attackBonus: 4, maxHp: 80,
+    hireLine: '로이가 씩씩하게 인사해요: "잘 부탁해요! 언제든 도울게요."',
+    description: '밸런스가 잘 잡힌 믿음직한 동료예요'
+  },
+  mira: {
+    name: '미라', personality: '대담한 전직 용병',
+    spriteKey: 'npc_villager3', tintColor: 0xff8888, // 붉은빛
+    hireCost: 8000, attackBonus: 7, maxHp: 60,
+    trait: { type: 'critBonus', value: 20 }, // 20% 확률로 추가 피해
+    hireLine: '미라가 씩 웃으며 말해요: "재밌겠는데? 같이 가보자."',
+    description: '공격적이지만 체력이 약해요. 가끔 강력한 일격을 날려요'
+  },
+  sein: {
+    name: '세인', personality: '신중한 은둔 학자',
+    spriteKey: 'npc_villager3', tintColor: 0x88aaff, // 푸른빛
+    hireCost: 8000, attackBonus: 3, maxHp: 110,
+    trait: { type: 'damageReduction', value: 25 }, // 받는 피해 25% 감소
+    hireLine: '세인이 조용히 고개를 끄덕여요: "신중하게 움직이겠습니다."',
+    description: '체력이 높고 잘 버텨요. 받는 피해가 줄어들어요'
+  },
+  pie: {
+    name: '파이', personality: '쾌활한 방랑자',
+    spriteKey: 'npc_villager3', tintColor: 0x88ffaa, // 초록빛
+    hireCost: 6000, attackBonus: 5, maxHp: 75,
+    trait: { type: 'expBonus', value: 1.5 }, // 경험치 1.5배
+    hireLine: '파이가 신나서 폴짝 뛰어요: "우와, 드디어 모험이다!"',
+    description: '성장이 빨라요. 금방 강해지는 타입이에요'
   }
 };
 
