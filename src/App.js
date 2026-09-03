@@ -824,14 +824,20 @@ function App() {
               </h4>
 
               {playerStats.hiredCompanionId ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <span>
-                    현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}
-                    {playerStats.companionClass && ` (${CLASS_TYPES[playerStats.companionClass]?.icon} ${CLASS_TYPES[playerStats.companionClass]?.name})`}
-                  </span>
-                  <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
-                    해고
-                  </button>
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>
+                      현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}
+                      ({COMPANION_TYPES[playerStats.hiredCompanionId]?.personality})
+                      {playerStats.companionClass && ` · ${CLASS_TYPES[playerStats.companionClass]?.icon} ${CLASS_TYPES[playerStats.companionClass]?.name}`}
+                    </span>
+                    <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                      해고
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
+                    Lv.{playerStats.companionLevel || 1} (EXP {playerStats.companionExp || 0})
+                  </div>
                 </div>
               ) : (
                 Object.entries(COMPANION_TYPES).map(([companionId, info]) => {
@@ -840,7 +846,9 @@ function App() {
                     <div key={companionId} style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
                     }}>
-                      <span>{info.name} · {info.description}</span>
+                      <span>
+                        <strong>{info.name}</strong> ({info.personality}) · {info.description}
+                      </span>
                       <button
                         onClick={() => sceneRef.current.hireCompanion(companionId)}
                         disabled={!canAfford}

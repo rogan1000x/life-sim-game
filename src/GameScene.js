@@ -152,6 +152,10 @@ export class GameScene extends Phaser.Scene {
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
       if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
+      // 예전 저장 데이터에 있던 'traveler'는 이번에 개성 있는 동료 4명(roy/mira/sein/pie)으로
+      // 바뀌면서 사라진 id예요. 그대로 두면 COMPANION_TYPES에서 못 찾아 에러가 나니,
+      // 가장 비슷한 기본형인 'roy'로 자동 변환해줘요.
+      if (this.hiredCompanionId === 'traveler') this.hiredCompanionId = 'roy';
       if (data.companionClass !== undefined) this.companionClass = data.companionClass;
       if (data.companionLevel !== undefined) this.companionLevel = data.companionLevel;
       if (data.companionExp !== undefined) this.companionExp = data.companionExp;
@@ -1509,13 +1513,17 @@ export class GameScene extends Phaser.Scene {
 
     const assignedClassInfo = CLASS_TYPES[this.companionClass];
     this.addLog(`${info.name}을(를) 고용했어요! (${assignedClassInfo.icon} ${assignedClassInfo.name})`, 'gain');
+    // 동료마다 다른 대사(hireLine)가 있으면 그것도 이어서 보여줌 (개성을 느낄 수 있게)
+    if (info.hireLine) this.addLog(info.hireLine, 'info');
     this.syncStatsToReact();
   }
 
   dismissCompanion() {
     if (!this.hiredCompanionId) return;
 
-    const info = COMPANION_TYPES[this.hiredCompanionId];
+    // 이름을 못 찾는 경우(데이터에 없는 id)에도 최소한 에러 없이 해고 자체는 되도록,
+    // info가 없으면 "동료"라는 기본 이름으로 대신 처리함
+    const info = COMPANION_TYPES[this.hiredCompanionId] || { name: '동료' };
 
     if (this.companionSprite) {
       this.companionSprite.destroy();
@@ -1551,6 +1559,9 @@ export class GameScene extends Phaser.Scene {
     this.companionSprite = this.add.sprite(spawnX, spawnY, info.spriteKey, 1);
     this.companionSprite.setScale(5);
 
+    // 동료마다 다른 색조(tintColor)를 입혀서, 같은 그림이라도 최소한의 외형 구분이 되게 함
+    if (info.tintColor) this.companionSprite.setTint(info.tintColor);
+
     this.physics.add.existing(this.companionSprite);
     this.companionSprite.body.setCollideWorldBounds(true);
 
@@ -1559,8 +1570,13 @@ export class GameScene extends Phaser.Scene {
       if (info2.category !== 'hostile_monster' || !entity.active) return;
       if (this.companionKO) return;
 
-      this.companionHp -= info2.damage;
-      this.addLog(`동료가 ${info2.name}에게 ${info2.damage} 피해를 입음`, 'death');
+      // 세인처럼 damageReduction 특성이 있으면, 받는 피해를 그만큼 줄여줌
+      const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+      const reductionPercent = companionInfo?.trait?.type === 'damageReduction' ? companionInfo.trait.value : 0;
+      const actualDamage = Math.round(info2.damage * (1 - reductionPercent / 100));
+
+      this.companionHp -= actualDamage;
+      this.addLog(`동료가 ${info2.name}에게 ${actualDamage} 피해를 입음`, 'death');
 
       if (this.companionHp <= 0) {
         this.handleCompanionKO();
@@ -1663,11 +1679,18 @@ export class GameScene extends Phaser.Scene {
     const isBuffActive = this.time.now < this.companionBuffEndTime;
     const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
     const effectiveAttackBonus = companionInfo.attackBonus + (this.companionLevel - 1) * 2;
-    const damage = Math.round(effectiveAttackBonus * 2 * buffMultiplier);
+    let damage = Math.round(effectiveAttackBonus * 2 * buffMultiplier);
+
+    // 미라처럼 critBonus 특성이 있으면, 그 확률만큼 추가 피해(2배)가 터짐
+    let isCompanionCrit = false;
+    if (companionInfo.trait?.type === 'critBonus' && Phaser.Math.Between(1, 100) <= companionInfo.trait.value) {
+      damage *= 2;
+      isCompanionCrit = true;
+    }
 
     target.hp -= damage;
-    this.addLog(`동료가 ${targetInfo.name}에게 ${damage} 피해`, 'kill');
-    this.createParticleBurst(target.x, target.y, 0xffe066, 6);
+    this.addLog(isCompanionCrit ? `동료의 강타! ${targetInfo.name}에게 ${damage} 피해` : `동료가 ${targetInfo.name}에게 ${damage} 피해`, 'kill');
+    this.createParticleBurst(target.x, target.y, 0xffe066, isCompanionCrit ? 12 : 6);
 
     this.gainCompanionExp(3);
 
@@ -1675,7 +1698,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   gainCompanionExp(amount) {
-    this.companionExp += amount;
+    // 파이처럼 expBonus 특성이 있으면, 얻는 경험치 자체를 배율만큼 늘려줌
+    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+    const expMultiplier = companionInfo?.trait?.type === 'expBonus' ? companionInfo.trait.value : 1;
+    this.companionExp += Math.round(amount * expMultiplier);
     const expNeeded = this.companionLevel * 20;
 
     if (this.companionExp >= expNeeded) {
