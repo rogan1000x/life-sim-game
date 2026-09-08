@@ -100,6 +100,11 @@ function App() {
   const [graphItemId, setGraphItemId] = useState(null);
   const [skillCooldownMs, setSkillCooldownMs] = useState(0);
 
+  // ESC 메뉴가 열려있는지 여부, 그리고 옵션 슬라이더들의 현재 값이에요
+  const [showEscMenu, setShowEscMenu] = useState(false);
+  const [soundVolume, setSoundVolumeState] = useState(100);
+  const [brightness, setBrightnessState] = useState(100);
+
   const MAX_VISIBLE_LOGS = 10;
 
   const addLog = (text, type) => {
@@ -163,6 +168,16 @@ function App() {
       }
       if (e.key === 'i' || e.key === 'I') {
         setShowCharacterPanel(prev => !prev);
+      }
+      if (e.key === 'Escape') {
+        // 이전 상태의 "반대"로 바꾸면서, 그 결과를 곧바로 GameScene에도 알려줘야 해요.
+        // setShowEscMenu(prev => ...) 안에서는 최신 값을 계산만 하고, 부수효과(GameScene 호출)는
+        // 그 계산된 값을 이용해 바깥에서 한 번 더 해주는 방식으로 처리함
+        setShowEscMenu(prev => {
+          const next = !prev;
+          if (sceneRef.current) sceneRef.current.setPaused(next);
+          return next;
+        });
       }
     }
 
@@ -562,6 +577,95 @@ function App() {
           <p style={{ fontSize: '11px', color: '#a87878', marginTop: '14px', textAlign: 'center' }}>
             'I' 키로 패널 열기/닫기
           </p>
+        </div>
+      )}
+
+      {/* ESC 메뉴 - 키 설명 / 옵션(소리, 밝기) / 게임 종료를 한 화면에 모아둔 패널 */}
+      {showEscMenu && (
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          ...panelStyle,
+          padding: '25px',
+          zIndex: 4000,
+          minWidth: '320px',
+          maxHeight: '85vh',
+          overflowY: 'auto'
+        }}>
+          <h3 style={{ margin: '0 0 16px', color: THEME.gold, textAlign: 'center' }}>⏸ 일시정지</h3>
+
+          <h4 style={{ margin: '0 0 8px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            ⌨ 조작 키 안내
+          </h4>
+          <div style={{ fontSize: '12px', lineHeight: '1.8', marginBottom: '18px' }}>
+            <div>방향키 : 이동</div>
+            <div>Space : 채집 / 공격</div>
+            <div>E : NPC 대화 / 문 상호작용</div>
+            <div>H : 집·주점 출입</div>
+            <div>F : 밭 구매·심기·수확</div>
+            <div>Q : 액티브 스킬 발동</div>
+            <div>G : 사냥터·던전 게이트 입장</div>
+            <div>I : 캐릭터 정보 패널</div>
+            <div>P : Admin 패널 (개발용)</div>
+            <div>ESC : 이 메뉴 열기/닫기</div>
+          </div>
+
+          <h4 style={{ margin: '0 0 8px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+            🔧 옵션
+          </h4>
+          <div style={{ marginBottom: '10px' }}>
+            <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>
+              🔊 소리 크기: {soundVolume}%
+            </label>
+            <input
+              type="range" min="0" max="100" value={soundVolume}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setSoundVolumeState(value);
+                if (sceneRef.current) sceneRef.current.setSoundVolume(value);
+              }}
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div style={{ marginBottom: '18px' }}>
+            <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>
+              💡 화면 밝기: {brightness}%
+            </label>
+            <input
+              type="range" min="20" max="100" value={brightness}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setBrightnessState(value);
+                if (sceneRef.current) sceneRef.current.setBrightness(value);
+              }}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <button
+            onClick={() => {
+              setShowEscMenu(false);
+              if (sceneRef.current) sceneRef.current.setPaused(false);
+            }}
+            style={{ ...buttonStyle, width: '100%', marginBottom: '10px' }}
+          >
+            돌아가기
+          </button>
+          <button
+            onClick={() => {
+              // 브라우저 보안 정책상, 스크립트가 직접 연 탭이 아니면 window.close()가 안 먹힐 수 있어요.
+              // 그런 경우를 대비해 안내 문구를 같이 보여줌
+              window.close();
+              setTimeout(() => {
+                alert('브라우저 정책상 자동으로 닫히지 않았어요. 이 탭을 직접 닫아주세요.');
+              }, 300);
+            }}
+            style={{ ...buttonStyle, width: '100%', backgroundColor: '#7a3030' }}
+          >
+            게임 종료
+          </button>
         </div>
       )}
 

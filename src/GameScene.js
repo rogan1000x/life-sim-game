@@ -94,6 +94,11 @@ export class GameScene extends Phaser.Scene {
     this.onCooldownUpdate = null;
 
     this.godMode = false;
+
+    // ESC 메뉴 관련 상태예요.
+    this.isPaused = false;       // true면 update()가 맨 위에서 멈춰서 게임이 완전히 정지돼요
+    this.soundVolume = 100;      // 0~100 사이 값. playSound()에서 실제 음량 계산에 씀
+    this.brightnessPercent = 100; // 0~100 사이 값. 100이면 원래 밝기, 낮을수록 화면이 어두워짐
   }
 
   preload() {
@@ -348,6 +353,13 @@ export class GameScene extends Phaser.Scene {
     this.nightOverlay.setDepth(999);
     this.nightOverlay.setAlpha(0);
 
+    // 밝기 조절 전용 오버레이 - nightOverlay(밤 표현)와는 별개로, 순수하게 사용자가
+    // 설정한 밝기값만 반영함. 검은색을 깔고 알파(투명도)로 어둡게 만드는 원리예요.
+    this.brightnessOverlay = this.add.rectangle(400, 300, 800, 600, 0x000000);
+    this.brightnessOverlay.setScrollFactor(0);
+    this.brightnessOverlay.setDepth(998); // nightOverlay보다 한 단계 아래 (밤 효과와 자연스럽게 겹치도록)
+    this.brightnessOverlay.setAlpha(0);
+
     this.isInsideHouse = false;
     this.isDead = false;
 
@@ -356,6 +368,7 @@ export class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this.hp <= 0) return;
+    if (this.isPaused) return; // ESC 메뉴가 열려있으면 여기서 완전히 멈춤 (시간도 안 흐르고 몬스터도 안 움직임)
 
     this.updateGameClock(delta);
 
@@ -2189,14 +2202,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   playSound(freq) {
+    if (this.soundVolume <= 0) return; // 음량이 0이면 아예 소리를 만들지 않음
+
     try {
       const ctx = this.sound.context;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
+      const volumeMultiplier = this.soundVolume / 100; // 0~100을 0~1로 환산
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(ctx.destination);
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1 * volumeMultiplier, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
       osc.start();
       osc.stop(ctx.currentTime + 0.2);
@@ -2241,5 +2257,28 @@ export class GameScene extends Phaser.Scene {
     this.hp = this.maxHp;
     this.hpText.setText('HP: ' + this.hp);
     this.syncStatsToReact();
+  }
+
+  // ESC 메뉴가 열리고 닫힐 때 App.js에서 호출해줌. isPausedValue가 true면 게임 정지,
+  // false면 다시 재개돼요. 정지 순간 캐릭터가 미끄러지듯 계속 움직이지 않도록 속도도 0으로 만듦
+  setPaused(isPausedValue) {
+    this.isPaused = isPausedValue;
+    if (isPausedValue && this.player?.body) {
+      this.player.body.setVelocity(0, 0);
+    }
+  }
+
+  // 옵션 화면의 소리 슬라이더에서 호출돼요. 0~100 사이 값을 받아서 저장해두고,
+  // 실제 소리는 playSound()가 재생하는 순간에 이 값을 반영해서 계산함
+  setSoundVolume(percent) {
+    this.soundVolume = Math.max(0, Math.min(100, percent));
+  }
+
+  // 옵션 화면의 밝기 슬라이더에서 호출돼요. 100이면 원래 밝기(오버레이 투명),
+  // 낮을수록 화면이 어두워짐 (최대 80%까지만 어둡게 해서, 0으로 내려도 완전히 안 보이진 않게 함)
+  setBrightness(percent) {
+    this.brightnessPercent = Math.max(0, Math.min(100, percent));
+    const darkness = (100 - this.brightnessPercent) / 100 * 0.8;
+    this.brightnessOverlay.setAlpha(darkness);
   }
 }
