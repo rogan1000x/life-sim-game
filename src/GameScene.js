@@ -218,6 +218,15 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < GAME_CONFIG.wolfCount; i++) {
       this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'wolf'));
     }
+    for (let i = 0; i < GAME_CONFIG.deerCount; i++) {
+      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'deer'));
+    }
+    for (let i = 0; i < GAME_CONFIG.goblinCount; i++) {
+      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'goblin'));
+    }
+    for (let i = 0; i < GAME_CONFIG.banditCount; i++) {
+      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'bandit'));
+    }
 
     this.player = this.add.sprite(400, 300, 'player', 5);
     this.player.setScale(5);

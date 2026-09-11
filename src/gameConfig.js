@@ -99,11 +99,166 @@ export const CLASS_SKILLS = {
       description: '레벨당 치명타 확률 +1.5%'
     }
   ],
-  archer: [],
-  mage: [],
-  priest: [],
-  rogue: [],
-  summoner: []
+  archer: [
+    {
+      id: 'archer_precise_shot', name: '정밀 사격', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 2,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 공격력 +2'
+    },
+    {
+      id: 'archer_wild_step', name: '야생의 발놀림', maxLevel: 5,
+      effectType: 'speed', effectPerLevel: 3,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 이동속도 +3'
+    },
+    {
+      id: 'archer_hawk_eye', name: '매의 눈', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1.5,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 치명타 확률 +1.5%'
+    },
+    {
+      id: 'archer_quiver_mastery', name: '화살통 강화', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 3,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 공격력 +3 (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'archer_swift_ward', name: '신속의 결계', maxLevel: 5,
+      effectType: 'speed', effectPerLevel: 5,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 이동속도 +5'
+    }
+  ],
+  mage: [
+    {
+      id: 'mage_mana_compression', name: '마력 압축', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 2,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 공격력 +2'
+    },
+    {
+      id: 'mage_arcane_ward', name: '비전 갑주', maxLevel: 5,
+      effectType: 'maxHp', effectPerLevel: 12,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 최대체력 +12'
+    },
+    {
+      id: 'mage_cold_focus', name: '냉철한 집중', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1.5,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 치명타 확률 +1.5%'
+    },
+    {
+      id: 'mage_elemental_surge', name: '원소 폭주', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 3,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 공격력 +3 (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'mage_spacetime_warp', name: '시공 왜곡', maxLevel: 5,
+      effectType: 'defense', effectPerLevel: 2,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 방어력 +2'
+    }
+  ],
+  priest: [
+    {
+      id: 'priest_holy_blessing', name: '신성한 축복', maxLevel: 5,
+      effectType: 'maxHp', effectPerLevel: 15,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 최대체력 +15'
+    },
+    {
+      id: 'priest_patient_prayer', name: '인내의 기도', maxLevel: 5,
+      effectType: 'defense', effectPerLevel: 2,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 방어력 +2'
+    },
+    {
+      id: 'priest_purifying_light', name: '정화의 빛', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 치명타 확률 +1%'
+    },
+    {
+      id: 'priest_martyr_will', name: '순교자의 의지', maxLevel: 5,
+      effectType: 'maxHp', effectPerLevel: 10,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 최대체력 +10 (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'priest_archangel_grace', name: '대천사의 가호', maxLevel: 5,
+      effectType: 'defense', effectPerLevel: 3,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 방어력 +3'
+    }
+  ],
+  rogue: [
+    {
+      id: 'rogue_stealth_step', name: '은신 보법', maxLevel: 5,
+      effectType: 'speed', effectPerLevel: 3,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 이동속도 +3'
+    },
+    {
+      id: 'rogue_weak_point', name: '급소 파악', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1.5,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 치명타 확률 +1.5%'
+    },
+    {
+      id: 'rogue_venom_coating', name: '맹독 코팅', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 2,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 공격력 +2'
+    },
+    {
+      id: 'rogue_shadow_trick', name: '그림자 속임수', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 2,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 치명타 확률 +2% (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'rogue_night_ruler', name: '밤의 지배자', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 3,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 공격력 +3'
+    }
+  ],
+  summoner: [
+    {
+      id: 'summoner_pact_bond', name: '계약 강화', maxLevel: 5,
+      effectType: 'maxHp', effectPerLevel: 12,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 최대체력 +12'
+    },
+    {
+      id: 'summoner_mind_resonance', name: '정신 공명', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 2,
+      unlockCondition: { type: 'always' },
+      description: '레벨당 공격력 +2'
+    },
+    {
+      id: 'summoner_summon_bond', name: '소환 유대', maxLevel: 5,
+      effectType: 'defense', effectPerLevel: 2,
+      unlockCondition: { type: 'level', value: 3 },
+      description: '레벨당 방어력 +2'
+    },
+    {
+      id: 'summoner_grand_summoning', name: '대군 소환술', maxLevel: 5,
+      effectType: 'attack', effectPerLevel: 3,
+      unlockCondition: { type: 'kills', value: 15 },
+      description: '레벨당 공격력 +3 (몬스터 15마리 처치 시 해금)'
+    },
+    {
+      id: 'summoner_absolute_summon', name: '절대 소환', maxLevel: 5,
+      effectType: 'critChance', effectPerLevel: 1.5,
+      unlockCondition: { type: 'level', value: 7 },
+      description: '레벨당 치명타 확률 +1.5%'
+    }
+  ]
 };
 
 
@@ -113,6 +268,9 @@ export const GAME_CONFIG = {
   stoneCount: 2,
   rabbitCount: 3,
   wolfCount: 4,
+  deerCount: 3,   // 사슴 - 순한 동물, 토끼보다 조금 더 비싼 사냥감
+  goblinCount: 3, // 고블린 - 늑대보다 약한 초반용 몬스터
+  banditCount: 2, // 도적 - 늑대보다 강한 고급 몬스터 (적게 등장)
   wolfRespawnMin: 5000, // 늑대 리스폰 최소 시간(ms)
   wolfRespawnMax: 10000, // 늑대 리스폰 최대 시간(ms)
   dayLengthSeconds: 300 // 게임 속 하루(24시간)가 현실 300초(5분) 동안 흐름 - 테스트하기 좋게 짧게 잡음
@@ -141,6 +299,20 @@ export const ENTITY_TYPES = {
     spriteRunKey: 'wolf_run', spriteRunFrames: 3,
     spriteScale: 2.5,
     facingOffsetDeg: 240
+  },
+  deer: {
+    name: '사슴', category: 'passive_animal',
+    exp: 25, color: 0x8b6914, radius: 18, sound: 600, hp: 1
+  },
+  goblin: {
+    name: '고블린', category: 'hostile_monster',
+    exp: 20, color: 0x2e8b57, radius: 16, sound: 180, hp: 15,
+    damage: 5, speed: 70
+  },
+  bandit: {
+    name: '도적', category: 'hostile_monster',
+    exp: 55, color: 0x4a3728, radius: 20, sound: 130, hp: 40,
+    damage: 14, speed: 90
   }
 };
 
@@ -249,7 +421,7 @@ export const SHOP_ITEMS = [
   { id: 'ring_agility', name: '민첩의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 3, icon: null, maxDurability: 999 },
   { id: 'ring_power', name: '힘의 반지', basePrice: 60, category: 'equipment', slot: 'ring', effectType: 'attack', effectValue: 5, icon: null, maxDurability: 999 },
   // 목걸이
-    { id: 'necklace_vitality', name: '활력의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 30, icon: null, maxDurability: 999 },
+  { id: 'necklace_vitality', name: '활력의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 30, icon: null, maxDurability: 999 },
   { id: 'necklace_swift', name: '신속의 목걸이', basePrice: 65, category: 'equipment', slot: 'necklace', effectType: 'speed', effectValue: 12, icon: null, maxDurability: 999 },
 
   // 사냥터 보스 전용 레어 장비 - rareOnly:true는 상점에서 안 팔고 오직 사냥터 보스만 드랍한다는 표시예요
@@ -258,7 +430,7 @@ export const SHOP_ITEMS = [
   { id: 'rare_swift_boots', name: '질풍의 장화', basePrice: 350, category: 'equipment', slot: 'shoes', effectType: 'speed', effectValue: 20, rareOnly: true, icon: null, maxDurability: 45 },
   { id: 'rare_guardian_shield', name: '수호자의 방패', basePrice: 450, category: 'equipment', slot: 'shield', effectType: 'defense', effectValue: 12, rareOnly: true, icon: null, maxDurability: 60 },
   { id: 'rare_hunters_ring', name: '사냥꾼의 반지', basePrice: 550, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 8, rareOnly: true, icon: null, maxDurability: 999 },
-    { id: 'rare_ancient_amulet', name: '고대의 부적', basePrice: 700, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 50, rareOnly: true, icon: null, maxDurability: 999 },
+  { id: 'rare_ancient_amulet', name: '고대의 부적', basePrice: 700, category: 'equipment', slot: 'necklace', effectType: 'maxHp', effectValue: 50, rareOnly: true, icon: null, maxDurability: 999 },
 
   // 던전 최상위 등급(S/SS/SSS) 전용 레어 장비 - 사냥터보다 훨씬 강력함
   { id: 'dungeon_rare_s', name: '천상의 검', basePrice: 900, category: 'equipment', slot: 'weapon', effectType: 'attack', effectValue: 25, rareOnly: true, icon: null, maxDurability: 80 },
@@ -268,6 +440,9 @@ export const SHOP_ITEMS = [
   { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
   { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
   { id: 'wolf', name: '늑대 가죽', basePrice: 25, category: 'monster', icon: null },
+  { id: 'deer', name: '사슴 가죽', basePrice: 18, category: 'monster', icon: null },
+  { id: 'goblin', name: '고블린 이빨', basePrice: 15, category: 'monster', icon: null },
+  { id: 'bandit', name: '도적의 전리품', basePrice: 35, category: 'monster', icon: null },
 
   // 씨앗 아이템들 - category가 'seed'라서, 상점에서는 다른 아이템처럼 그냥 사고팔 수 있지만
   // 사용(useItem)이나 장착(equipItem) 대상은 아니고, 오직 "밭에 심기(plantSeed)"에만 쓰임
@@ -335,7 +510,10 @@ export const QUEST_TEMPLATES = [
   { id: 'quest_rabbit', name: '토끼 사냥', targetId: 'rabbit', targetCount: 4, rewardGold: 120, rewardExp: 35, minRank: 'bronze', description: '토끼 고기 4개를 모아오세요' },
   { id: 'quest_carrot', name: '농부의 부탁', targetId: 'carrot', targetCount: 3, rewardGold: 90, rewardExp: 30, minRank: 'bronze', description: '당근 3개를 재배해서 가져오세요' },
   { id: 'quest_wolf_pack', name: '늑대 무리 소탕', targetId: 'wolf', targetCount: 8, rewardGold: 400, rewardExp: 120, minRank: 'silver', description: '늑대 가죽 8개를 모아오세요 (숙련자용 의뢰)' },
-  { id: 'quest_grand_hunt', name: '대규모 늑대 토벌', targetId: 'wolf', targetCount: 15, rewardGold: 900, rewardExp: 250, minRank: 'gold', description: '늑대 가죽 15개를 모아오세요 (전문가용 의뢰)' }
+  { id: 'quest_grand_hunt', name: '대규모 늑대 토벌', targetId: 'wolf', targetCount: 15, rewardGold: 900, rewardExp: 250, minRank: 'gold', description: '늑대 가죽 15개를 모아오세요 (전문가용 의뢰)' },
+  { id: 'quest_deer', name: '사슴 사냥', targetId: 'deer', targetCount: 4, rewardGold: 130, rewardExp: 40, minRank: 'bronze', description: '사슴 4마리를 사냥해오세요' },
+  { id: 'quest_goblin', name: '고블린 소탕', targetId: 'goblin', targetCount: 6, rewardGold: 150, rewardExp: 45, minRank: 'bronze', description: '고블린 6마리를 처치하세요' },
+  { id: 'quest_bandit', name: '도적 소탕', targetId: 'bandit', targetCount: 3, rewardGold: 300, rewardExp: 90, minRank: 'silver', description: '도적 3명을 처치하세요 (숙련자용 의뢰)' }
 ];
 
 // 고용 가능한 동료 목록이에요. hireCost는 다른 가격들처럼 "구리 단위" 숫자고,
