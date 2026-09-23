@@ -276,6 +276,31 @@ export const GAME_CONFIG = {
   dayLengthSeconds: 300 // 게임 속 하루(24시간)가 현실 300초(5분) 동안 흐름 - 테스트하기 좋게 짧게 잡음
 };
 
+// 동서남북 별도 필드 정의예요. 각 필드는 마을 지도와 완전히 분리된 독립 공간이에요.
+// entrance는 마을 지도 위에 입구가 놓일 좌표, monsters는 그 필드에서 스폰될 몬스터 구성이에요.
+export const FIELD_ZONES = {
+  north: {
+    name: '북쪽 숲 필드', color: 0x2d6b2d,
+    entrance: { x: 400, y: 30 },
+    monsters: [{ type: 'wolf', count: 5 }, { type: 'goblin', count: 2 }]
+  },
+  south: {
+    name: '남쪽 평야 필드', color: 0x8b9a4a,
+    entrance: { x: 400, y: 570 },
+    monsters: [{ type: 'goblin', count: 6 }]
+  },
+  east: {
+    name: '동쪽 산악 필드', color: 0x7a6a5a,
+    entrance: { x: 770, y: 300 },
+    monsters: [{ type: 'bandit', count: 4 }, { type: 'wolf', count: 2 }]
+  },
+  west: {
+    name: '서쪽 해안 필드', color: 0x3a7a8a,
+    entrance: { x: 30, y: 300 },
+    monsters: [{ type: 'goblin', count: 3 }, { type: 'bandit', count: 2 }]
+  }
+};
+
 // 자원/동물/몬스터 등 게임 안의 모든 상호작용 오브젝트 정의
 // category에 따라 게임 로직이 자동으로 다르게 행동함 (resource / passive_animal / hostile_monster)
 export const ENTITY_TYPES = {

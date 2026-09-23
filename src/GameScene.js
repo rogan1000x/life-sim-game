@@ -3,7 +3,7 @@ import {
   GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency,
   CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES,
   CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, HUNTING_GROUND_RANKS, HUNTING_GROUNDS,
-  DUNGEON_RANKS, DUNGEONS
+  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES
 } from './gameConfig';
 
 export class GameScene extends Phaser.Scene {
@@ -59,6 +59,10 @@ export class GameScene extends Phaser.Scene {
 
     this.floorTileSprite = null;
     this.receptionistNpc = null;
+    // 집/주점에 들어갈 때마다 새로 만드는 콜라이더들을 기억해두는 배열이에요.
+    // 나갈 때 가구/카운터/리나 오브젝트만 destroy하고 이 콜라이더들을 안 지우면,
+    // 이미 사라진 대상을 가리키는 "유령 콜라이더"가 계속 쌓여서 물리 엔진 에러의 원인이 돼요.
+    this.furnitureColliders = [];
 
     this.gateObjects = {};
     this.nearbyGate = null;
@@ -71,6 +75,13 @@ export class GameScene extends Phaser.Scene {
     this.dungeonWaveRemaining = 0;
     this.dungeonExitGate = null;
 
+    // 동서남북 별도 필드 관련 상태예요. 던전과 달리 "클리어해야 나감" 조건이 없고,
+    // 언제든 H키로 나갈 수 있는 자유로운 공간이에요.
+    this.fieldGateObjects = {};
+    this.nearbyFieldZone = null;
+    this.isInsideField = false;
+    this.currentFieldZone = null;
+
     this.hiredCompanionId = null;
     this.companionSprite = null;
     this.companionClass = null;
@@ -81,6 +92,10 @@ export class GameScene extends Phaser.Scene {
     this.companionAttackCooldownEnd = 0;
     this.companionLevel = 1;
     this.companionExp = 0;
+    // 동료와 몬스터가 부딪혔을 때 처리하는 콜라이더를 기억해두는 곳이에요.
+    // 동료를 새로 소환할 때마다 이 값을 먼저 지우고 새로 만들어야, 예전 동료를
+    // 가리키는 유령 콜라이더가 안 쌓여요 (오늘 겪은 에러의 진짜 원인이었어요)
+    this.companionOverlapCollider = null;
 
     this.activeSkillCooldownEndTime = 0;
     this.companionBuffEndTime = 0;
@@ -95,10 +110,9 @@ export class GameScene extends Phaser.Scene {
 
     this.godMode = false;
 
-    // ESC 메뉴 관련 상태예요.
-    this.isPaused = false;       // true면 update()가 맨 위에서 멈춰서 게임이 완전히 정지돼요
-    this.soundVolume = 100;      // 0~100 사이 값. playSound()에서 실제 음량 계산에 씀
-    this.brightnessPercent = 100; // 0~100 사이 값. 100이면 원래 밝기, 낮을수록 화면이 어두워짐
+    this.isPaused = false;
+    this.soundVolume = 100;
+    this.brightnessPercent = 100;
   }
 
   preload() {
@@ -157,9 +171,6 @@ export class GameScene extends Phaser.Scene {
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
       if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
-      // 예전 저장 데이터에 있던 'traveler'는 이번에 개성 있는 동료 4명(roy/mira/sein/pie)으로
-      // 바뀌면서 사라진 id예요. 그대로 두면 COMPANION_TYPES에서 못 찾아 에러가 나니,
-      // 가장 비슷한 기본형인 'roy'로 자동 변환해줘요.
       if (this.hiredCompanionId === 'traveler') this.hiredCompanionId = 'roy';
       if (data.companionClass !== undefined) this.companionClass = data.companionClass;
       if (data.companionLevel !== undefined) this.companionLevel = data.companionLevel;
@@ -215,17 +226,9 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < GAME_CONFIG.rabbitCount; i++) {
       this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'rabbit'));
     }
-    for (let i = 0; i < GAME_CONFIG.wolfCount; i++) {
-      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'wolf'));
-    }
+    // 늑대/고블린/도적은 이제 마을 지도가 아니라 동서남북 별도 필드에서만 등장해요
     for (let i = 0; i < GAME_CONFIG.deerCount; i++) {
       this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'deer'));
-    }
-    for (let i = 0; i < GAME_CONFIG.goblinCount; i++) {
-      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'goblin'));
-    }
-    for (let i = 0; i < GAME_CONFIG.banditCount; i++) {
-      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'bandit'));
     }
 
     this.player = this.add.sprite(400, 300, 'player', 5);
@@ -341,6 +344,24 @@ export class GameScene extends Phaser.Scene {
       this.dungeonGateObjects[dungeonConfig.id] = { config: dungeonConfig, gateSprite: gate, label };
     });
 
+    // 동서남북 별도 필드 입구 4개를 마을 지도 가장자리에 배치함
+    Object.keys(FIELD_ZONES).forEach(zoneId => {
+      const zone = FIELD_ZONES[zoneId];
+
+      const entrance = this.add.circle(zone.entrance.x, zone.entrance.y, 22, zone.color);
+      entrance.setStrokeStyle(3, 0xffffff, 0.9);
+
+      const label = this.add.text(zone.entrance.x, zone.entrance.y - 32, zone.name, {
+        fontSize: '12px', color: '#ffffff', backgroundColor: '#00000088', padding: { x: 4, y: 2 }
+      });
+      label.setOrigin(0.5);
+
+      this.physics.add.existing(entrance, true);
+      this.physics.add.collider(this.player, entrance);
+
+      this.fieldGateObjects[zoneId] = { gateSprite: entrance, label };
+    });
+
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, { fontSize: '20px', color: '#ff4444' });
 
     this.buildingNameText = this.add.text(400, 20, '', {
@@ -362,11 +383,9 @@ export class GameScene extends Phaser.Scene {
     this.nightOverlay.setDepth(999);
     this.nightOverlay.setAlpha(0);
 
-    // 밝기 조절 전용 오버레이 - nightOverlay(밤 표현)와는 별개로, 순수하게 사용자가
-    // 설정한 밝기값만 반영함. 검은색을 깔고 알파(투명도)로 어둡게 만드는 원리예요.
     this.brightnessOverlay = this.add.rectangle(400, 300, 800, 600, 0x000000);
     this.brightnessOverlay.setScrollFactor(0);
-    this.brightnessOverlay.setDepth(998); // nightOverlay보다 한 단계 아래 (밤 효과와 자연스럽게 겹치도록)
+    this.brightnessOverlay.setDepth(998);
     this.brightnessOverlay.setAlpha(0);
 
     this.isInsideHouse = false;
@@ -377,7 +396,7 @@ export class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this.hp <= 0) return;
-    if (this.isPaused) return; // ESC 메뉴가 열려있으면 여기서 완전히 멈춤 (시간도 안 흐르고 몬스터도 안 움직임)
+    if (this.isPaused) return;
 
     this.updateGameClock(delta);
 
@@ -505,7 +524,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    if (!this.isInsideDungeon) {
+    if (!this.isInsideDungeon && !this.isInsideField) {
       this.nearbyNpc = null;
       this.npcs.getChildren().forEach(npc => {
         const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y);
@@ -563,9 +582,19 @@ export class GameScene extends Phaser.Scene {
         if (distance < 100) this.nearbyDungeonGate = dungeonConfig;
       });
 
+      this.nearbyFieldZone = null;
+      Object.keys(FIELD_ZONES).forEach(zoneId => {
+        const zone = FIELD_ZONES[zoneId];
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, zone.entrance.x, zone.entrance.y);
+        if (distance < 90) this.nearbyFieldZone = zoneId;
+      });
+
       if (this.nearbyDungeonGate) {
         const rankInfo = DUNGEON_RANKS[this.nearbyDungeonGate.rank];
         this.buildingNameText.setText(`${rankInfo.name} 입구 (G키로 입장)`);
+        this.buildingNameText.setVisible(true);
+      } else if (this.nearbyFieldZone) {
+        this.buildingNameText.setText(`${FIELD_ZONES[this.nearbyFieldZone].name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
       } else if (this.nearbyGate) {
         const rankInfo = HUNTING_GROUND_RANKS[this.nearbyGate.rank];
@@ -578,12 +607,18 @@ export class GameScene extends Phaser.Scene {
       if (Phaser.Input.Keyboard.JustDown(this.gKey)) {
         if (this.nearbyDungeonGate) {
           this.enterDungeon(this.nearbyDungeonGate);
+        } else if (this.nearbyFieldZone) {
+          this.enterField(this.nearbyFieldZone);
         } else if (this.nearbyGate) {
           this.enterHuntingGround(this.nearbyGate.id);
         }
       }
-    } else {
+    } else if (this.isInsideDungeon) {
       this.handleDungeonExit();
+    } else if (this.isInsideField) {
+      if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
+        this.exitField();
+      }
     }
   }
 
@@ -661,32 +696,40 @@ export class GameScene extends Phaser.Scene {
       this.floorTileSprite = this.add.tileSprite(400, 300, 800, 600, info.floorTile);
       this.floorTileSprite.setDepth(-1);
 
+      // 이전에 들어왔던 집의 가구/카운터/리나 오브젝트와, 거기 걸려있던 콜라이더를
+      // 전부 확실히 정리해요. 콜라이더까지 같이 안 지우면, 이미 사라진 가구를
+      // 가리키는 유령 콜라이더가 남아서 물리 엔진 에러의 원인이 돼요.
       this.furnitureObjects = this.furnitureObjects || [];
       this.furnitureObjects.forEach(f => f.destroy());
       this.furnitureObjects = [];
+      this.furnitureColliders.forEach(c => c.destroy());
+      this.furnitureColliders = [];
 
       info.furniture.forEach(item => {
         const furniture = this.add.sprite(item.x, item.y, item.spriteKey);
         furniture.setScale(item.scale || 4);
         this.physics.add.existing(furniture, true);
-        this.physics.add.collider(this.player, furniture);
+        const collider = this.physics.add.collider(this.player, furniture);
         this.furnitureObjects.push(furniture);
+        this.furnitureColliders.push(collider);
       });
 
       if (info.isTavern) {
         const counter = this.add.rectangle(600, 150, 140, 30, 0x5a3a2a);
         counter.setStrokeStyle(2, 0x3a2416);
         this.physics.add.existing(counter, true);
-        this.physics.add.collider(this.player, counter);
+        const counterCollider = this.physics.add.collider(this.player, counter);
         this.furnitureObjects.push(counter);
+        this.furnitureColliders.push(counterCollider);
 
         const receptionistInfo = NPC_DATA['rina'];
         const receptionist = this.add.sprite(600, 110, receptionistInfo.spriteKey, 1);
         receptionist.setScale(5);
         receptionist.npcType = 'rina';
         this.physics.add.existing(receptionist, true);
-        this.physics.add.collider(this.player, receptionist);
+        const receptionistCollider = this.physics.add.collider(this.player, receptionist);
         this.furnitureObjects.push(receptionist);
+        this.furnitureColliders.push(receptionistCollider);
 
         this.receptionistNpc = receptionist;
 
@@ -715,6 +758,8 @@ export class GameScene extends Phaser.Scene {
         this.floorTileSprite = null;
       }
 
+      this.furnitureColliders.forEach(c => c.destroy());
+      this.furnitureColliders = [];
       this.furnitureObjects.forEach(f => f.destroy());
       this.furnitureObjects = [];
 
@@ -794,7 +839,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   isIndoors() {
-    return this.isInsideHouse || this.isInsideDungeon;
+    return this.isInsideHouse || this.isInsideDungeon || this.isInsideField;
   }
 
   setOutdoorObjectsActive(isActive) {
@@ -811,7 +856,7 @@ export class GameScene extends Phaser.Scene {
       });
     });
 
-    [this.gateObjects, this.dungeonGateObjects].forEach(objMap => {
+    [this.gateObjects, this.dungeonGateObjects, this.fieldGateObjects].forEach(objMap => {
       Object.values(objMap).forEach(({ gateSprite, label }) => {
         gateSprite.setVisible(isActive);
         gateSprite.body.enable = isActive;
@@ -1535,7 +1580,6 @@ export class GameScene extends Phaser.Scene {
 
     const assignedClassInfo = CLASS_TYPES[this.companionClass];
     this.addLog(`${info.name}을(를) 고용했어요! (${assignedClassInfo.icon} ${assignedClassInfo.name})`, 'gain');
-    // 동료마다 다른 대사(hireLine)가 있으면 그것도 이어서 보여줌 (개성을 느낄 수 있게)
     if (info.hireLine) this.addLog(info.hireLine, 'info');
     this.syncStatsToReact();
   }
@@ -1543,9 +1587,12 @@ export class GameScene extends Phaser.Scene {
   dismissCompanion() {
     if (!this.hiredCompanionId) return;
 
-    // 이름을 못 찾는 경우(데이터에 없는 id)에도 최소한 에러 없이 해고 자체는 되도록,
-    // info가 없으면 "동료"라는 기본 이름으로 대신 처리함
     const info = COMPANION_TYPES[this.hiredCompanionId] || { name: '동료' };
+
+    if (this.companionOverlapCollider) {
+      this.companionOverlapCollider.destroy();
+      this.companionOverlapCollider = null;
+    }
 
     if (this.companionSprite) {
       this.companionSprite.destroy();
@@ -1581,18 +1628,24 @@ export class GameScene extends Phaser.Scene {
     this.companionSprite = this.add.sprite(spawnX, spawnY, info.spriteKey, 1);
     this.companionSprite.setScale(5);
 
-    // 동료마다 다른 색조(tintColor)를 입혀서, 같은 그림이라도 최소한의 외형 구분이 되게 함
     if (info.tintColor) this.companionSprite.setTint(info.tintColor);
 
     this.physics.add.existing(this.companionSprite);
     this.companionSprite.body.setCollideWorldBounds(true);
 
-    this.physics.add.overlap(this.companionSprite, this.entities, (companionObj, entity) => {
+    // 이전 동료를 가리키던 콜라이더가 남아있다면 먼저 확실히 지워요.
+    // 이 정리를 빼먹으면, 해고→재고용을 반복할 때마다 이미 사라진 동료를 가리키는
+    // "유령 콜라이더"가 계속 쌓여서 물리 엔진이 undefined를 읽으려다 에러가 나요.
+    if (this.companionOverlapCollider) {
+      this.companionOverlapCollider.destroy();
+      this.companionOverlapCollider = null;
+    }
+
+    this.companionOverlapCollider = this.physics.add.overlap(this.companionSprite, this.entities, (companionObj, entity) => {
       const info2 = ENTITY_TYPES[entity.entityType];
       if (info2.category !== 'hostile_monster' || !entity.active) return;
       if (this.companionKO) return;
 
-      // 세인처럼 damageReduction 특성이 있으면, 받는 피해를 그만큼 줄여줌
       const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
       const reductionPercent = companionInfo?.trait?.type === 'damageReduction' ? companionInfo.trait.value : 0;
       const actualDamage = Math.round(info2.damage * (1 - reductionPercent / 100));
@@ -1703,7 +1756,6 @@ export class GameScene extends Phaser.Scene {
     const effectiveAttackBonus = companionInfo.attackBonus + (this.companionLevel - 1) * 2;
     let damage = Math.round(effectiveAttackBonus * 2 * buffMultiplier);
 
-    // 미라처럼 critBonus 특성이 있으면, 그 확률만큼 추가 피해(2배)가 터짐
     let isCompanionCrit = false;
     if (companionInfo.trait?.type === 'critBonus' && Phaser.Math.Between(1, 100) <= companionInfo.trait.value) {
       damage *= 2;
@@ -1720,7 +1772,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   gainCompanionExp(amount) {
-    // 파이처럼 expBonus 특성이 있으면, 얻는 경험치 자체를 배율만큼 늘려줌
     const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
     const expMultiplier = companionInfo?.trait?.type === 'expBonus' ? companionInfo.trait.value : 1;
     this.companionExp += Math.round(amount * expMultiplier);
@@ -1980,7 +2031,7 @@ export class GameScene extends Phaser.Scene {
 
     if (entity.encounterType === 'hunt') {
       if (entity.isBoss) this.tryDropRareItem(entity.encounterRankInfo);
-      entity.destroy();
+      this.entities.remove(entity, true, true);
       this.huntWaveCounts[entity.encounterGateId] = Math.max(0, this.huntWaveCounts[entity.encounterGateId] - 1);
       if (this.huntWaveCounts[entity.encounterGateId] === 0) {
         this.addLog('사냥터 클리어!', 'gain');
@@ -1990,11 +2041,16 @@ export class GameScene extends Phaser.Scene {
 
     if (entity.encounterType === 'dungeon') {
       if (entity.isBoss) this.tryDropRareItem(entity.encounterRankInfo);
-      entity.destroy();
+      this.entities.remove(entity, true, true);
       this.dungeonWaveRemaining = Math.max(0, this.dungeonWaveRemaining - 1);
       if (this.dungeonWaveRemaining === 0) {
         this.spawnDungeonExitDoor();
       }
+      return;
+    }
+
+    if (entity.encounterType === 'field') {
+      this.entities.remove(entity, true, true);
       return;
     }
 
@@ -2164,6 +2220,67 @@ export class GameScene extends Phaser.Scene {
     this.addLog('던전에서 나왔어요', 'info');
   }
 
+  // 필드 입구(G키)에 들어갔을 때 호출돼요. 던전과 비슷하게 완전히 별도의 공간으로 이동하지만,
+  // 클리어 조건 없이 몬스터를 몇 마리 잡든 상관없이 자유롭게 다닐 수 있어요.
+  enterField(zoneId) {
+    if (this.isInsideField) return;
+
+    const zone = FIELD_ZONES[zoneId];
+
+    this.isInsideField = true;
+    this.currentFieldZone = zoneId;
+    this.setOutdoorObjectsActive(false);
+
+    this.player.x = 400;
+    this.player.y = 300;
+
+    this.cameras.main.setBackgroundColor(Phaser.Display.Color.IntegerToColor(zone.color).rgba);
+
+    this.buildingNameText.setText(`${zone.name} (H키로 나가기)`);
+    this.buildingNameText.setVisible(true);
+
+    // 별도 그룹 없이 기존 entities 그룹 하나에만 등록하고, "꼬리표(fieldZoneId)"로
+    // 어느 필드 소속인지 구분해요. 이렇게 하면 그룹을 여러 개 관리하며 생기는
+    // 물리 엔진 꼬임 없이, entities.remove()만으로 안전하게 정리할 수 있어요.
+    zone.monsters.forEach(monsterConfig => {
+      for (let i = 0; i < monsterConfig.count; i++) {
+        const spawnX = Phaser.Math.Between(100, 700);
+        const spawnY = Phaser.Math.Between(100, 500);
+
+        const monster = this.createEntity(spawnX, spawnY, monsterConfig.type);
+        monster.encounterType = 'field';
+        monster.fieldZoneId = zoneId;
+        this.entities.add(monster);
+      }
+    });
+
+    this.addLog(`${zone.name}에 입장했어요`, 'info');
+  }
+
+  // 필드에서 나갈 때 호출돼요. 언제든(H키) 자유롭게 나갈 수 있음
+  exitField() {
+    this.isInsideField = false;
+
+    // group.remove(대상, true, true)로 그룹에서 확실히 빼고 destroy까지 함께 처리해요.
+    // 배열을 [...]로 먼저 복사하는 이유는, forEach 도중에 remove가 그룹의 원본 배열을
+    // 실시간으로 바꾸면 반복문이 몇 개를 건너뛸 수 있어서예요.
+    const fieldMonsters = [...this.entities.getChildren()].filter(e => e.fieldZoneId === this.currentFieldZone);
+    fieldMonsters.forEach(monster => this.entities.remove(monster, true, true));
+
+    this.setOutdoorObjectsActive(true);
+    this.cameras.main.setBackgroundColor('#4a7c3c');
+
+    const zone = FIELD_ZONES[this.currentFieldZone];
+    if (zone) {
+      this.player.x = zone.entrance.x;
+      this.player.y = zone.entrance.y + 80;
+    }
+    this.currentFieldZone = null;
+
+    this.buildingNameText.setVisible(false);
+    this.addLog('필드에서 나왔어요', 'info');
+  }
+
   createParticleBurst(x, y, color, count = 8) {
     for (let i = 0; i < count; i++) {
       const particle = this.add.circle(x, y, 4, color);
@@ -2211,13 +2328,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   playSound(freq) {
-    if (this.soundVolume <= 0) return; // 음량이 0이면 아예 소리를 만들지 않음
+    if (this.soundVolume <= 0) return;
 
     try {
       const ctx = this.sound.context;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      const volumeMultiplier = this.soundVolume / 100; // 0~100을 0~1로 환산
+      const volumeMultiplier = this.soundVolume / 100;
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -2268,8 +2385,6 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  // ESC 메뉴가 열리고 닫힐 때 App.js에서 호출해줌. isPausedValue가 true면 게임 정지,
-  // false면 다시 재개돼요. 정지 순간 캐릭터가 미끄러지듯 계속 움직이지 않도록 속도도 0으로 만듦
   setPaused(isPausedValue) {
     this.isPaused = isPausedValue;
     if (isPausedValue && this.player?.body) {
@@ -2277,14 +2392,10 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // 옵션 화면의 소리 슬라이더에서 호출돼요. 0~100 사이 값을 받아서 저장해두고,
-  // 실제 소리는 playSound()가 재생하는 순간에 이 값을 반영해서 계산함
   setSoundVolume(percent) {
     this.soundVolume = Math.max(0, Math.min(100, percent));
   }
 
-  // 옵션 화면의 밝기 슬라이더에서 호출돼요. 100이면 원래 밝기(오버레이 투명),
-  // 낮을수록 화면이 어두워짐 (최대 80%까지만 어둡게 해서, 0으로 내려도 완전히 안 보이진 않게 함)
   setBrightness(percent) {
     this.brightnessPercent = Math.max(0, Math.min(100, percent));
     const darkness = (100 - this.brightnessPercent) / 100 * 0.8;
