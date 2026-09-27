@@ -944,7 +944,7 @@ function App() {
                   </div>
                 </div>
               ) : (
-                Object.entries(COMPANION_TYPES).map(([companionId, info]) => {
+                Object.entries(COMPANION_TYPES).filter(([id, info]) => !info.isSpiritSummon).map(([companionId, info]) => {
                   const canAfford = playerStats.gold >= info.hireCost;
                   return (
                     <div key={companionId} style={{

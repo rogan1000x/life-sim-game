@@ -82,23 +82,19 @@ export class GameScene extends Phaser.Scene {
     this.isInsideField = false;
     this.currentFieldZone = null;
 
-    this.hiredCompanionId = null;
-    this.companionSprite = null;
-    this.companionClass = null;
-    this.companionAutoSkillTimer = null;
-    this.companionHp = 0;
-    this.companionMaxHp = 0;
-    this.companionKO = false;
-    this.companionAttackCooldownEnd = 0;
-    this.companionLevel = 1;
-    this.companionExp = 0;
-    // 동료와 몬스터가 부딪혔을 때 처리하는 콜라이더를 기억해두는 곳이에요.
-    // 동료를 새로 소환할 때마다 이 값을 먼저 지우고 새로 만들어야, 예전 동료를
-    // 가리키는 유령 콜라이더가 안 쌓여요 (오늘 겪은 에러의 진짜 원인이었어요)
-    this.companionOverlapCollider = null;
+    // 용병(동료)과 소환사의 정령을 완전히 독립된 두 유닛으로 관리해요.
+    // 예전에는 이 둘이 같은 변수(hiredCompanionId 등)를 공유해서, 정령을 소환하면
+    // 이미 고용한 용병 정보가 덮어써지는 문제가 있었어요. allies.mercenary / allies.spirit
+    // 로 완전히 분리해서 두 유닛을 동시에 데리고 다닐 수 있게 했어요.
+    this.allies = {
+      mercenary: this.createEmptyAllyState(),
+      spirit: this.createEmptyAllyState()
+    };
 
     this.activeSkillCooldownEndTime = 0;
-    this.companionBuffEndTime = 0;
+
+    // 도적 은신 관련 상태예요.
+    this.rogueAmbushReady = false; // true면 "다음 공격이 기습(무조건 치명타)"으로 처리됨
 
     this.onStatsUpdate = null;
     this.onShopToggle = null;
@@ -113,6 +109,28 @@ export class GameScene extends Phaser.Scene {
     this.isPaused = false;
     this.soundVolume = 100;
     this.brightnessPercent = 100;
+  }
+
+  createEmptyAllyState() {
+    return {
+      id: null,
+      sprite: null,
+      cls: null,
+      level: 1,
+      exp: 0,
+      hp: 0,
+      maxHp: 0,
+      isKO: false,
+      overlapCollider: null,
+      autoSkillTimer: null,
+      attackCooldownEnd: 0,
+      buffEndTime: 0,
+      isSpiritSummon: false
+    };
+  }
+
+  getAllySlots() {
+    return ['mercenary', 'spirit'];
   }
 
   preload() {
@@ -170,11 +188,27 @@ export class GameScene extends Phaser.Scene {
       if (data.plantedCrops !== undefined) this.plantedCrops = data.plantedCrops;
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
-      if (data.hiredCompanionId !== undefined) this.hiredCompanionId = data.hiredCompanionId;
-      if (this.hiredCompanionId === 'traveler') this.hiredCompanionId = 'roy';
-      if (data.companionClass !== undefined) this.companionClass = data.companionClass;
-      if (data.companionLevel !== undefined) this.companionLevel = data.companionLevel;
-      if (data.companionExp !== undefined) this.companionExp = data.companionExp;
+      if (data.allies !== undefined) {
+        this.getAllySlots().forEach(slot => {
+          if (data.allies[slot]) {
+            this.allies[slot] = {
+              ...this.createEmptyAllyState(),
+              ...data.allies[slot],
+              sprite: null,
+              overlapCollider: null,
+              autoSkillTimer: null
+            };
+          }
+        });
+      } else if (data.hiredCompanionId !== undefined) {
+        // 예전 저장 형식(용병 하나만 있던 시절) 호환용 마이그레이션이에요.
+        let legacyId = data.hiredCompanionId;
+        if (legacyId === 'traveler') legacyId = 'roy';
+        this.allies.mercenary.id = legacyId;
+        this.allies.mercenary.cls = data.companionClass ?? null;
+        this.allies.mercenary.level = data.companionLevel ?? 1;
+        this.allies.mercenary.exp = data.companionExp ?? 0;
+      }
       if (data.rank !== undefined) this.rank = data.rank;
       if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
       if (data.playerClass !== undefined) this.playerClass = data.playerClass;
@@ -239,9 +273,11 @@ export class GameScene extends Phaser.Scene {
     this.facingDirection = 'down';
     this.directionFrames = { left: 0, down: 1, up: 2, right: 3, idleLeft: 4, idleDown: 5, idleUp: 6, idleRight: 7 };
 
-    if (this.hiredCompanionId) {
-      this.spawnCompanion(this.hiredCompanionId);
-    }
+    this.getAllySlots().forEach(slot => {
+      if (this.allies[slot].id) {
+        this.spawnAlly(slot, this.allies[slot].id);
+      }
+    });
 
     this.cursors = this.input.keyboard.createCursorKeys();
     this.spaceKey = this.input.keyboard.addKey('SPACE');
@@ -408,7 +444,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.handleMovement();
-    this.updateCompanionFollow();
+    this.updateAlliesFollow();
 
     const cooldownRemaining = Math.max(0, this.activeSkillCooldownEndTime - this.time.now);
     if (this.onCooldownUpdate) this.onCooldownUpdate(cooldownRemaining);
@@ -486,32 +522,57 @@ export class GameScene extends Phaser.Scene {
         } else if (info.category === 'hostile_monster' && this.getPlayerAttackType() === 'melee') {
           const myClassInfo = this.playerClass ? CLASS_TYPES[this.playerClass] : null;
           const isNightBonusActive = myClassInfo?.nightAttackBonus && this.nightIntensity > 0.3;
-          const baseAttackPower = this.attackPower + (isNightBonusActive ? myClassInfo.nightAttackBonus : 0);
+          let baseAttackPower = this.attackPower + (isNightBonusActive ? myClassInfo.nightAttackBonus : 0);
 
-          const damageResult = this.calculateDamage(baseAttackPower);
+          // 성직자는 언데드 몬스터에게 공격력 1.6배 + 크리티컬 확률 +25%를 받아요
+          const isUndeadTarget = !!info.isUndead;
+          let critBonusForThisHit = 0;
+          if (this.playerClass === 'priest' && isUndeadTarget) {
+            baseAttackPower *= 1.6;
+            critBonusForThisHit = 25;
+          }
+
+          let damageResult;
+          // 도적이 은신 중 "기습 준비"가 된 상태라면, 확률 계산 없이 무조건 치명타 + 추가 배율로 처리함
+          if (this.playerClass === 'rogue' && this.rogueAmbushReady) {
+            this.rogueAmbushReady = false;
+            this.player.setAlpha(1); // 기습에 성공하면 은신이 풀리며 다시 또렷하게 보임
+            const skill = CLASS_ACTIVE_SKILLS.rogue;
+            const ambushDamage = Math.round(baseAttackPower * (this.critDamage / 100) * skill.ambushMultiplier);
+            damageResult = { damage: ambushDamage, isCrit: true };
+            this.addLog(`기습 공격! ${info.name}에게 ${ambushDamage} 피해`, 'kill');
+          } else {
+            damageResult = this.calculateDamage(baseAttackPower, critBonusForThisHit);
+            this.addLog(
+              damageResult.isCrit
+                ? `치명타!${isUndeadTarget && this.playerClass === 'priest' ? ' (언데드 특효)' : ''} ${info.name}에게 ${damageResult.damage} 피해`
+                : `${info.name}에게 ${damageResult.damage} 피해`,
+              'kill'
+            );
+          }
+
           entity.hp -= damageResult.damage;
-          this.addLog(
-            damageResult.isCrit ? `치명타! ${info.name}에게 ${damageResult.damage} 피해` : `${info.name}에게 ${damageResult.damage} 피해`,
-            'kill'
-          );
 
           this.playHitSound();
           this.reduceWeaponDurability();
           this.createAttackSlashEffect(entity.x, entity.y);
 
-          if (this.companionSprite && !this.companionKO) {
-            const companionDistance = Phaser.Math.Distance.Between(
-              this.companionSprite.x, this.companionSprite.y, entity.x, entity.y
-            );
-            if (companionDistance < 150) {
-              const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
-              const isBuffActive = this.time.now < this.companionBuffEndTime;
-              const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
-              const effectiveAttackBonus = COMPANION_TYPES[this.hiredCompanionId].attackBonus + (this.companionLevel - 1) * 2;
+          this.getAllySlots().forEach(slot => {
+            const ally = this.allies[slot];
+            if (!ally.sprite || ally.isKO) return;
 
-              entity.hp -= effectiveAttackBonus * companionMultiplier * buffMultiplier;
-            }
-          }
+            const allyDistance = Phaser.Math.Distance.Between(
+              ally.sprite.x, ally.sprite.y, entity.x, entity.y
+            );
+            if (allyDistance >= 150) return;
+
+            const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
+            const isBuffActive = this.time.now < ally.buffEndTime;
+            const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
+            const effectiveAttackBonus = COMPANION_TYPES[ally.id].attackBonus + (ally.level - 1) * 2;
+
+            entity.hp -= effectiveAttackBonus * companionMultiplier * buffMultiplier;
+          });
 
           if (entity.hp <= 0) {
             this.defeatMonster(entity, info);
@@ -744,12 +805,14 @@ export class GameScene extends Phaser.Scene {
       this.buildingNameText.setVisible(false);
       this.receptionistNpc = null;
 
-      if (this.companionSprite) {
-        this.companionSprite.setVisible(true);
-        this.companionSprite.body.enable = true;
-        this.companionSprite.x = this.player.x - 60;
-        this.companionSprite.y = this.player.y;
-      }
+      this.getAllySlots().forEach((slot, idx) => {
+        const ally = this.allies[slot];
+        if (!ally.sprite) return;
+        ally.sprite.setVisible(true);
+        ally.sprite.body.enable = true;
+        ally.sprite.x = this.player.x - 60 - idx * 40;
+        ally.sprite.y = this.player.y;
+      });
 
       this.setOutdoorObjectsActive(true);
 
@@ -1035,10 +1098,20 @@ export class GameScene extends Phaser.Scene {
       ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
       equipmentDurability: this.equipmentDurability,
       activeQuestIds: this.activeQuestIds,
-      hiredCompanionId: this.hiredCompanionId,
-      companionClass: this.companionClass,
-      companionLevel: this.companionLevel,
-      companionExp: this.companionExp,
+      allies: {
+        mercenary: {
+          id: this.allies.mercenary.id,
+          cls: this.allies.mercenary.cls,
+          level: this.allies.mercenary.level,
+          exp: this.allies.mercenary.exp
+        },
+        spirit: {
+          id: this.allies.spirit.id,
+          cls: this.allies.spirit.cls,
+          level: this.allies.spirit.level,
+          exp: this.allies.spirit.exp
+        }
+      },
       rank: this.rank, questsCompletedCount: this.questsCompletedCount,
       playerClass: this.playerClass,
       skillPoints: this.skillPoints, skillLevels: this.skillLevels,
@@ -1074,10 +1147,16 @@ export class GameScene extends Phaser.Scene {
         marketStock: { ...this.marketStock },
         equipmentDurability: { ...this.equipmentDurability },
         activeQuestIds: [...this.activeQuestIds],
-        hiredCompanionId: this.hiredCompanionId,
-        companionClass: this.companionClass,
-        companionLevel: this.companionLevel,
-        companionExp: this.companionExp,
+        // 기존 UI 호환을 위해 "동료"(용병) 정보는 예전 키 이름 그대로 내려줘요.
+        hiredCompanionId: this.allies.mercenary.id,
+        companionClass: this.allies.mercenary.cls,
+        companionLevel: this.allies.mercenary.level,
+        companionExp: this.allies.mercenary.exp,
+        // 소환사의 정령은 용병과 완전히 별개 유닛이라 새 키로 따로 내려줘요.
+        // (화면에 표시하려면 UI 쪽에도 이 키들을 읽는 코드가 추가로 필요해요)
+        spiritCompanionId: this.allies.spirit.id,
+        spiritLevel: this.allies.spirit.level,
+        spiritExp: this.allies.spirit.exp,
         rank: this.rank,
         questsCompletedCount: this.questsCompletedCount,
         playerClass: this.playerClass,
@@ -1164,14 +1243,17 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  calculateDamage(baseAttackPower) {
+  // critChanceBonus를 추가로 받을 수 있게 확장했어요 (성직자의 언데드 특효에서 사용).
+  // 기본값 0을 줘서, 안 넘기면 예전이랑 완전히 똑같이 동작해요.
+  calculateDamage(baseAttackPower, critChanceBonus = 0) {
     const minPercent = Math.min(130, 70 + this.precision) / 100;
     const maxPercent = 1.3;
 
     const variance = minPercent + Math.random() * (maxPercent - minPercent);
     let damage = baseAttackPower * variance;
 
-    const isCrit = Math.random() * 100 < this.critChance;
+    const effectiveCritChance = Math.min(100, this.critChance + critChanceBonus);
+    const isCrit = Math.random() * 100 < effectiveCritChance;
     if (isCrit) damage *= (this.critDamage / 100);
 
     return { damage: Math.max(1, Math.round(damage)), isCrit };
@@ -1555,8 +1637,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   hireCompanion(companionId) {
-    if (this.hiredCompanionId) {
-      this.addLog('이미 동료가 있어요. 먼저 해고해주세요', 'info');
+    if (this.allies.mercenary.id) {
+      this.addLog('이미 용병이 있어요. 먼저 해고해주세요', 'info');
       return;
     }
 
@@ -1569,191 +1651,224 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.gold -= info.hireCost;
-    this.hiredCompanionId = companionId;
 
     const classIds = Object.keys(CLASS_TYPES);
-    this.companionClass = classIds[Phaser.Math.Between(0, classIds.length - 1)];
-    this.companionLevel = 1;
-    this.companionExp = 0;
+    const assignedClass = classIds[Phaser.Math.Between(0, classIds.length - 1)];
 
-    this.spawnCompanion(companionId);
+    this.spawnAlly('mercenary', companionId, { cls: assignedClass });
 
-    const assignedClassInfo = CLASS_TYPES[this.companionClass];
+    const assignedClassInfo = CLASS_TYPES[assignedClass];
     this.addLog(`${info.name}을(를) 고용했어요! (${assignedClassInfo.icon} ${assignedClassInfo.name})`, 'gain');
     if (info.hireLine) this.addLog(info.hireLine, 'info');
     this.syncStatsToReact();
   }
 
   dismissCompanion() {
-    if (!this.hiredCompanionId) return;
+    this.dismissAlly('mercenary', '동료');
+  }
 
-    const info = COMPANION_TYPES[this.hiredCompanionId] || { name: '동료' };
+  dismissAlly(slot, fallbackName = '동료') {
+    const ally = this.allies[slot];
+    if (!ally.id) return;
 
-    if (this.companionOverlapCollider) {
-      this.companionOverlapCollider.destroy();
-      this.companionOverlapCollider = null;
+    const info = COMPANION_TYPES[ally.id] || { name: fallbackName };
+
+    if (ally.overlapCollider) {
+      ally.overlapCollider.destroy();
+      ally.overlapCollider = null;
     }
 
-    if (this.companionSprite) {
-      this.companionSprite.destroy();
-      this.companionSprite = null;
+    if (ally.sprite) {
+      ally.sprite.destroy();
+      ally.sprite = null;
     }
 
-    if (this.companionAutoSkillTimer) {
-      this.companionAutoSkillTimer.remove();
-      this.companionAutoSkillTimer = null;
+    if (ally.autoSkillTimer) {
+      ally.autoSkillTimer.remove();
+      ally.autoSkillTimer = null;
     }
 
-    this.hiredCompanionId = null;
-    this.companionClass = null;
-    this.companionHp = 0;
-    this.companionMaxHp = 0;
-    this.companionKO = false;
+    this.allies[slot] = this.createEmptyAllyState();
 
     this.addLog(`${info.name}과(와) 헤어졌어요`, 'info');
     this.syncStatsToReact();
   }
 
-  spawnCompanion(companionId) {
+  spawnAlly(slot, companionId, options = {}) {
     const info = COMPANION_TYPES[companionId];
     if (!info) return;
 
-    this.companionMaxHp = info.maxHp;
-    this.companionHp = info.maxHp;
-    this.companionKO = false;
+    const ally = this.allies[slot];
 
-    const spawnX = this.player.x - 60;
+    ally.id = companionId;
+    ally.cls = options.cls !== undefined ? options.cls : null;
+    ally.level = 1;
+    ally.exp = 0;
+    ally.maxHp = info.maxHp;
+    ally.hp = info.maxHp;
+    ally.isKO = false;
+    ally.isSpiritSummon = !!info.isSpiritSummon;
+    ally.buffEndTime = 0;
+    ally.attackCooldownEnd = 0;
+
+    // 슬롯마다 위치를 살짝 다르게 잡아서(용병은 왼쪽, 정령은 오른쪽) 두 유닛이
+    // 서로 완전히 겹쳐서 소환되지 않게 해요.
+    const sideOffset = slot === 'spirit' ? 60 : -60;
+    const spawnX = this.player.x + sideOffset;
     const spawnY = this.player.y;
 
-    this.companionSprite = this.add.sprite(spawnX, spawnY, info.spriteKey, 1);
-    this.companionSprite.setScale(5);
-
-    if (info.tintColor) this.companionSprite.setTint(info.tintColor);
-
-    this.physics.add.existing(this.companionSprite);
-    this.companionSprite.body.setCollideWorldBounds(true);
-
-    // 이전 동료를 가리키던 콜라이더가 남아있다면 먼저 확실히 지워요.
-    // 이 정리를 빼먹으면, 해고→재고용을 반복할 때마다 이미 사라진 동료를 가리키는
-    // "유령 콜라이더"가 계속 쌓여서 물리 엔진이 undefined를 읽으려다 에러가 나요.
-    if (this.companionOverlapCollider) {
-      this.companionOverlapCollider.destroy();
-      this.companionOverlapCollider = null;
+    if (info.isSpiritSummon) {
+      // 정령은 사람 그림이 아니라 색깔 있는 원으로 표현해요 (몬스터를 닮은 정령이라는 느낌)
+      ally.sprite = this.add.circle(spawnX, spawnY, info.radius, info.color);
+    } else {
+      ally.sprite = this.add.sprite(spawnX, spawnY, info.spriteKey, 1);
+      ally.sprite.setScale(5);
+      if (info.tintColor) ally.sprite.setTint(info.tintColor);
     }
 
-    this.companionOverlapCollider = this.physics.add.overlap(this.companionSprite, this.entities, (companionObj, entity) => {
+    this.physics.add.existing(ally.sprite);
+    ally.sprite.body.setCollideWorldBounds(true);
+
+    // 이전 유닛(이 슬롯)을 가리키던 콜라이더가 남아있다면 먼저 확실히 지워요.
+    // 이 정리를 빼먹으면, 해고→재고용을 반복할 때마다 이미 사라진 유닛을 가리키는
+    // "유령 콜라이더"가 계속 쌓여서 물리 엔진이 undefined를 읽으려다 에러가 나요.
+    if (ally.overlapCollider) {
+      ally.overlapCollider.destroy();
+      ally.overlapCollider = null;
+    }
+
+    ally.overlapCollider = this.physics.add.overlap(ally.sprite, this.entities, (allyObj, entity) => {
       const info2 = ENTITY_TYPES[entity.entityType];
       if (info2.category !== 'hostile_monster' || !entity.active) return;
-      if (this.companionKO) return;
+      if (ally.isKO) return;
 
-      const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+      const companionInfo = COMPANION_TYPES[ally.id];
       const reductionPercent = companionInfo?.trait?.type === 'damageReduction' ? companionInfo.trait.value : 0;
       const actualDamage = Math.round(info2.damage * (1 - reductionPercent / 100));
 
-      this.companionHp -= actualDamage;
+      ally.hp -= actualDamage;
       this.addLog(`동료가 ${info2.name}에게 ${actualDamage} 피해를 입음`, 'death');
 
-      if (this.companionHp <= 0) {
-        this.handleCompanionKO();
+      if (ally.hp <= 0) {
+        this.handleAllyKO(slot);
       }
     });
 
-    this.startCompanionAutoSkillTimer();
+    this.startAllyAutoSkillTimer(slot);
   }
 
-  handleCompanionKO() {
-    this.companionKO = true;
-    this.companionSprite.setVisible(false);
-    this.companionSprite.body.enable = false;
+  handleAllyKO(slot) {
+    const ally = this.allies[slot];
+    ally.isKO = true;
+    ally.sprite.setVisible(false);
+    ally.sprite.body.enable = false;
 
     this.addLog('동료가 쓰러졌어요...', 'death');
 
     this.time.delayedCall(15000, () => {
-      if (!this.companionSprite) return;
-      this.companionKO = false;
-      this.companionHp = this.companionMaxHp;
-      this.companionSprite.setVisible(true);
-      this.companionSprite.body.enable = true;
-      this.companionSprite.x = this.player.x - 60;
-      this.companionSprite.y = this.player.y;
+      if (!ally.sprite) return;
+      ally.isKO = false;
+      ally.hp = ally.maxHp;
+      ally.sprite.setVisible(true);
+      ally.sprite.body.enable = true;
+      const sideOffset = slot === 'spirit' ? 60 : -60;
+      ally.sprite.x = this.player.x + sideOffset;
+      ally.sprite.y = this.player.y;
       this.addLog('동료가 다시 일어났어요', 'gain');
     });
   }
 
-  updateCompanionFollow() {
-    if (!this.companionSprite || this.companionKO) return;
+  updateAlliesFollow() {
+    this.getAllySlots().forEach(slot => this.updateAllyFollow(slot));
+  }
 
-    const lowHpThreshold = this.companionMaxHp * 0.3;
-    const isLowHp = this.companionHp < lowHpThreshold;
+  updateAllyFollow(slot) {
+    const ally = this.allies[slot];
+    if (!ally.sprite || ally.isKO) return;
+
+    const lowHpThreshold = ally.maxHp * 0.3;
+    const isLowHp = ally.hp < lowHpThreshold;
 
     if (isLowHp) {
-      const nearbyThreat = this.findNearestMonster(120, this.companionSprite.x, this.companionSprite.y);
+      const nearbyThreat = this.findNearestMonster(120, ally.sprite.x, ally.sprite.y);
       if (nearbyThreat) {
-        const fleeAngle = Phaser.Math.Angle.Between(nearbyThreat.x, nearbyThreat.y, this.companionSprite.x, this.companionSprite.y);
-        this.companionSprite.body.setVelocity(Math.cos(fleeAngle) * 190, Math.sin(fleeAngle) * 190);
-        this.updateCompanionFacing(this.companionSprite.x + Math.cos(fleeAngle), this.companionSprite.y + Math.sin(fleeAngle));
+        const fleeAngle = Phaser.Math.Angle.Between(nearbyThreat.x, nearbyThreat.y, ally.sprite.x, ally.sprite.y);
+        ally.sprite.body.setVelocity(Math.cos(fleeAngle) * 190, Math.sin(fleeAngle) * 190);
+        this.updateAllyFacing(slot, ally.sprite.x + Math.cos(fleeAngle), ally.sprite.y + Math.sin(fleeAngle));
         return;
       }
     }
 
     const threatToPlayer = this.findNearestMonster(180, this.player.x, this.player.y);
-    const nearbyTarget = threatToPlayer || this.findNearestMonster(220, this.companionSprite.x, this.companionSprite.y);
+    const nearbyTarget = threatToPlayer || this.findNearestMonster(220, ally.sprite.x, ally.sprite.y);
 
     if (nearbyTarget) {
       const attackRange = 55;
       const distanceToTarget = Phaser.Math.Distance.Between(
-        this.companionSprite.x, this.companionSprite.y, nearbyTarget.x, nearbyTarget.y
+        ally.sprite.x, ally.sprite.y, nearbyTarget.x, nearbyTarget.y
       );
 
       if (distanceToTarget > attackRange) {
-        const angle = Phaser.Math.Angle.Between(this.companionSprite.x, this.companionSprite.y, nearbyTarget.x, nearbyTarget.y);
-        this.companionSprite.body.setVelocity(Math.cos(angle) * 200, Math.sin(angle) * 200);
-        this.updateCompanionFacing(nearbyTarget.x, nearbyTarget.y);
+        const angle = Phaser.Math.Angle.Between(ally.sprite.x, ally.sprite.y, nearbyTarget.x, nearbyTarget.y);
+        ally.sprite.body.setVelocity(Math.cos(angle) * 200, Math.sin(angle) * 200);
+        this.updateAllyFacing(slot, nearbyTarget.x, nearbyTarget.y);
       } else {
-        this.companionSprite.body.setVelocity(0, 0);
-        this.updateCompanionFacing(nearbyTarget.x, nearbyTarget.y);
+        ally.sprite.body.setVelocity(0, 0);
+        this.updateAllyFacing(slot, nearbyTarget.x, nearbyTarget.y);
 
-        if (this.time.now >= this.companionAttackCooldownEnd) {
-          this.companionBasicAttack(nearbyTarget);
-          this.companionAttackCooldownEnd = this.time.now + 1000;
+        if (this.time.now >= ally.attackCooldownEnd) {
+          this.allyBasicAttack(slot, nearbyTarget);
+          ally.attackCooldownEnd = this.time.now + 1000;
         }
       }
       return;
     }
 
-    const followDistance = 70;
-    const distanceToPlayer = Phaser.Math.Distance.Between(
-      this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y
+    // 슬롯마다 따라다니는 위치를 살짝 다르게 둬서(용병은 왼쪽 뒤, 정령은 오른쪽 뒤),
+    // 두 유닛을 동시에 데리고 다닐 때 같은 자리로 몰려서 겹치지 않게 해요.
+    const followOffsetX = slot === 'spirit' ? 70 : -70;
+    const followTargetX = this.player.x + followOffsetX;
+    const followTargetY = this.player.y;
+    const followDistance = 40;
+
+    const distanceToFollowPoint = Phaser.Math.Distance.Between(
+      ally.sprite.x, ally.sprite.y, followTargetX, followTargetY
     );
 
-    if (distanceToPlayer > followDistance) {
-      const angle = Phaser.Math.Angle.Between(this.companionSprite.x, this.companionSprite.y, this.player.x, this.player.y);
-      this.companionSprite.body.setVelocity(Math.cos(angle) * 180, Math.sin(angle) * 180);
-      this.updateCompanionFacing(this.player.x, this.player.y);
+    if (distanceToFollowPoint > followDistance) {
+      const angle = Phaser.Math.Angle.Between(ally.sprite.x, ally.sprite.y, followTargetX, followTargetY);
+      ally.sprite.body.setVelocity(Math.cos(angle) * 180, Math.sin(angle) * 180);
+      this.updateAllyFacing(slot, followTargetX, followTargetY);
     } else {
-      this.companionSprite.body.setVelocity(0, 0);
+      ally.sprite.body.setVelocity(0, 0);
     }
   }
 
-  updateCompanionFacing(targetX, targetY) {
-    const dx = targetX - this.companionSprite.x;
-    const dy = targetY - this.companionSprite.y;
+  updateAllyFacing(slot, targetX, targetY) {
+    const ally = this.allies[slot];
+    // 정령(원 모양)은 방향별 그림이 없어서 setFrame 자체가 없는 오브젝트예요.
+    // 그대로 호출하면 에러가 나니, 정령일 때는 방향 전환을 그냥 건너뜀
+    if (ally.isSpiritSummon) return;
+
+    const dx = targetX - ally.sprite.x;
+    const dy = targetY - ally.sprite.y;
 
     if (Math.abs(dx) > Math.abs(dy)) {
-      this.companionSprite.setFrame(dx > 0 ? this.directionFrames.right : this.directionFrames.left);
+      ally.sprite.setFrame(dx > 0 ? this.directionFrames.right : this.directionFrames.left);
     } else {
-      this.companionSprite.setFrame(dy > 0 ? this.directionFrames.down : this.directionFrames.up);
+      ally.sprite.setFrame(dy > 0 ? this.directionFrames.down : this.directionFrames.up);
     }
   }
 
-  companionBasicAttack(target) {
-    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+  allyBasicAttack(slot, target) {
+    const ally = this.allies[slot];
+    const companionInfo = COMPANION_TYPES[ally.id];
     const targetInfo = ENTITY_TYPES[target.entityType];
     if (!companionInfo) return;
 
-    const isBuffActive = this.time.now < this.companionBuffEndTime;
+    const isBuffActive = this.time.now < ally.buffEndTime;
     const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
-    const effectiveAttackBonus = companionInfo.attackBonus + (this.companionLevel - 1) * 2;
+    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2;
     let damage = Math.round(effectiveAttackBonus * 2 * buffMultiplier);
 
     let isCompanionCrit = false;
@@ -1766,68 +1881,72 @@ export class GameScene extends Phaser.Scene {
     this.addLog(isCompanionCrit ? `동료의 강타! ${targetInfo.name}에게 ${damage} 피해` : `동료가 ${targetInfo.name}에게 ${damage} 피해`, 'kill');
     this.createParticleBurst(target.x, target.y, 0xffe066, isCompanionCrit ? 12 : 6);
 
-    this.gainCompanionExp(3);
+    this.gainAllyExp(slot, 3);
 
     if (target.hp <= 0) this.defeatMonster(target, targetInfo);
   }
 
-  gainCompanionExp(amount) {
-    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+  gainAllyExp(slot, amount) {
+    const ally = this.allies[slot];
+    const companionInfo = COMPANION_TYPES[ally.id];
     const expMultiplier = companionInfo?.trait?.type === 'expBonus' ? companionInfo.trait.value : 1;
-    this.companionExp += Math.round(amount * expMultiplier);
-    const expNeeded = this.companionLevel * 20;
+    ally.exp += Math.round(amount * expMultiplier);
+    const expNeeded = ally.level * 20;
 
-    if (this.companionExp >= expNeeded) {
-      this.companionExp -= expNeeded;
-      this.companionLevel++;
-      this.companionMaxHp += 10;
-      this.companionHp = this.companionMaxHp;
-      this.addLog(`동료가 레벨 ${this.companionLevel}(으)로 성장했어요!`, 'gain');
-      if (this.companionSprite) this.createParticleBurst(this.companionSprite.x, this.companionSprite.y, 0x7cc576, 12);
+    if (ally.exp >= expNeeded) {
+      ally.exp -= expNeeded;
+      ally.level++;
+      ally.maxHp += 10;
+      ally.hp = ally.maxHp;
+      this.addLog(`동료가 레벨 ${ally.level}(으)로 성장했어요!`, 'gain');
+      if (ally.sprite) this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0x7cc576, 12);
     }
 
     this.syncStatsToReact();
   }
 
-  startCompanionAutoSkillTimer() {
-    if (this.companionAutoSkillTimer) {
-      this.companionAutoSkillTimer.remove();
-      this.companionAutoSkillTimer = null;
-    }
-    if (!this.companionClass) return;
+  startAllyAutoSkillTimer(slot) {
+    const ally = this.allies[slot];
 
-    const skill = CLASS_ACTIVE_SKILLS[this.companionClass];
+    if (ally.autoSkillTimer) {
+      ally.autoSkillTimer.remove();
+      ally.autoSkillTimer = null;
+    }
+    if (!ally.cls) return;
+
+    const skill = CLASS_ACTIVE_SKILLS[ally.cls];
     if (!skill) return;
 
-    this.companionAutoSkillTimer = this.time.addEvent({
+    ally.autoSkillTimer = this.time.addEvent({
       delay: skill.cooldownMs, loop: true,
-      callback: () => this.useCompanionAutoSkill()
+      callback: () => this.useAllyAutoSkill(slot)
     });
   }
 
-  useCompanionAutoSkill() {
-    if (!this.companionSprite || !this.companionClass || this.companionKO) return;
+  useAllyAutoSkill(slot) {
+    const ally = this.allies[slot];
+    if (!ally.sprite || !ally.cls || ally.isKO) return;
 
-    const skill = CLASS_ACTIVE_SKILLS[this.companionClass];
-    const companionInfo = COMPANION_TYPES[this.hiredCompanionId];
+    const skill = CLASS_ACTIVE_SKILLS[ally.cls];
+    const companionInfo = COMPANION_TYPES[ally.id];
     if (!skill || !companionInfo) return;
 
-    const effectiveAttackBonus = companionInfo.attackBonus + (this.companionLevel - 1) * 2;
+    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2;
     const baseDamage = effectiveAttackBonus * 3;
 
-    if (this.companionClass === 'warrior' || this.companionClass === 'archer' || this.companionClass === 'rogue') {
-      const target = this.findNearestMonster(200, this.companionSprite.x, this.companionSprite.y);
+    if (ally.cls === 'warrior' || ally.cls === 'archer' || ally.cls === 'rogue') {
+      const target = this.findNearestMonster(200, ally.sprite.x, ally.sprite.y);
       if (!target) return;
 
       const targetInfo = ENTITY_TYPES[target.entityType];
       target.hp -= baseDamage;
       this.createParticleBurst(target.x, target.y, 0xffe066, 10);
       this.addLog(`동료의 ${skill.name}! ${baseDamage} 피해`, 'kill');
-      this.gainCompanionExp(5);
+      this.gainAllyExp(slot, 5);
 
       if (target.hp <= 0) this.defeatMonster(target, targetInfo);
-    } else if (this.companionClass === 'mage') {
-      const target = this.findNearestMonster(220, this.companionSprite.x, this.companionSprite.y);
+    } else if (ally.cls === 'mage') {
+      const target = this.findNearestMonster(220, ally.sprite.x, ally.sprite.y);
       if (!target) return;
 
       this.createParticleBurst(target.x, target.y, 0xff6633, 14);
@@ -1845,22 +1964,22 @@ export class GameScene extends Phaser.Scene {
       });
 
       this.addLog(`동료의 ${skill.name}! 광역 피해`, 'kill');
-      this.gainCompanionExp(5);
-    } else if (this.companionClass === 'priest') {
+      this.gainAllyExp(slot, 5);
+    } else if (ally.cls === 'priest') {
       const healAmount = Math.round(skill.healAmount / 2);
       this.hp = Math.min(this.maxHp, this.hp + healAmount);
       this.hpText.setText('HP: ' + this.hp);
       this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 10);
       this.addLog(`동료의 ${skill.name}! HP +${healAmount}`, 'gain');
-      this.gainCompanionExp(4);
+      this.gainAllyExp(slot, 4);
       this.syncStatsToReact();
-    } else if (this.companionClass === 'summoner') {
+    } else if (ally.cls === 'summoner') {
       const buffAmount = 5;
       this.bonusStats.attack += buffAmount;
       this.recalculateDerivedStats();
       this.createParticleBurst(this.player.x, this.player.y, 0xc77dff, 10);
       this.addLog(`동료의 ${skill.name}! 공격력이 잠시 강해졌어요`, 'gain');
-      this.gainCompanionExp(4);
+      this.gainAllyExp(slot, 4);
 
       this.time.delayedCall(skill.buffDurationMs, () => {
         this.bonusStats.attack -= buffAmount;
@@ -1952,17 +2071,14 @@ export class GameScene extends Phaser.Scene {
 
     let skillUsed = false;
 
-    if (this.playerClass === 'warrior' || this.playerClass === 'archer' || this.playerClass === 'rogue') {
+    if (this.playerClass === 'warrior' || this.playerClass === 'archer') {
       const target = this.findNearestMonster(skill.range);
       if (!target) {
         this.addLog('사거리 안에 몬스터가 없어요', 'info');
       } else {
         const targetInfo = ENTITY_TYPES[target.entityType];
         const boostedAttack = this.attackPower * skill.damageMultiplier;
-
-        const finalDamage = this.playerClass === 'rogue'
-          ? Math.round(boostedAttack * (this.critDamage / 100))
-          : Math.round(boostedAttack);
+        const finalDamage = Math.round(boostedAttack);
 
         target.hp -= finalDamage;
         this.createParticleBurst(target.x, target.y, 0xffe066, 16);
@@ -1970,6 +2086,34 @@ export class GameScene extends Phaser.Scene {
 
         if (target.hp <= 0) this.defeatMonster(target, targetInfo);
         skillUsed = true;
+      }
+    } else if (this.playerClass === 'rogue') {
+      // 도적의 Q는 원래 "은신"이에요. 근처에 몬스터가 있어야 쓸 수 있는 즉시 공격형 스킬이
+      // 아니라, 몬스터가 없어도 언제든 쓸 수 있고, 다음 근접 공격이 무조건 치명타(기습)로
+      // 들어가게 예약해두는 스킬이에요. 예전 코드는 이걸 warrior/archer랑 같은 "근처 타겟
+      // 필요" 조건에 묶어놔서, 근처에 적이 없으면 "사거리 안에 몬스터가 없어요"만 뜨고
+      // 은신 자체가 걸리지 않는 게 버그였어요.
+      if (this.rogueAmbushReady) {
+        this.addLog('이미 은신 상태예요', 'info');
+      } else {
+        this.rogueAmbushReady = true;
+        this.player.setAlpha(0.4);
+        this.createParticleBurst(this.player.x, this.player.y, 0x444444, 10);
+
+        const stealthDurationMs = skill.stealthDurationMs || 5000;
+        this.addLog(`${skill.name}! ${Math.round(stealthDurationMs / 1000)}초간 은신 상태가 되었어요. 다음 공격이 기습(치명타)으로 들어가요`, 'gain');
+        skillUsed = true;
+
+        // gameConfig의 stealthDurationMs 동안 공격을 안 했으면 은신이 자동으로 풀리게 해요.
+        // (공격에 성공하면 update()의 근접 공격 코드에서 이미 rogueAmbushReady를 꺼주니까,
+        // 여기서는 "시간 초과로 안 쓰인 경우"만 정리해주면 돼요)
+        this.time.delayedCall(stealthDurationMs, () => {
+          if (this.rogueAmbushReady) {
+            this.rogueAmbushReady = false;
+            this.player.setAlpha(1);
+            this.addLog('은신이 풀렸어요', 'info');
+          }
+        });
       }
     } else if (this.playerClass === 'mage') {
       const target = this.findNearestMonster(skill.range);
@@ -1995,19 +2139,77 @@ export class GameScene extends Phaser.Scene {
         skillUsed = true;
       }
     } else if (this.playerClass === 'priest') {
-      const healAmount = skill.healAmount + this.magicPower;
-      this.hp = Math.min(this.maxHp, this.hp + healAmount);
-      this.hpText.setText('HP: ' + this.hp);
-      this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 14);
-      this.addLog(`${skill.name}! HP +${healAmount}`, 'gain');
-      skillUsed = true;
-    } else if (this.playerClass === 'summoner') {
-      if (!this.companionSprite) {
-        this.addLog('버프를 걸어줄 동료가 없어요', 'info');
+      // 우선순위: 본인 체력 낮으면 자힐 -> 동료(용병/정령) 중 체력 낮은 쪽 힐 -> 그 외엔 성속성 공격
+      const selfLowHp = this.hp < this.maxHp * 0.5;
+
+      let lowestAlly = null;
+      let lowestAllyRatio = 1;
+      this.getAllySlots().forEach(slot => {
+        const ally = this.allies[slot];
+        if (!ally.sprite || ally.isKO || ally.maxHp <= 0) return;
+        const ratio = ally.hp / ally.maxHp;
+        if (ratio < 0.5 && ratio < lowestAllyRatio) {
+          lowestAllyRatio = ratio;
+          lowestAlly = ally;
+        }
+      });
+
+      const nearbyTarget = this.findNearestMonster(skill.range);
+
+      if (selfLowHp || (!lowestAlly && !nearbyTarget)) {
+        const healAmount = skill.healAmount + this.magicPower;
+        this.hp = Math.min(this.maxHp, this.hp + healAmount);
+        this.hpText.setText('HP: ' + this.hp);
+        this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 14);
+        this.addLog(`${skill.name}! HP +${healAmount}`, 'gain');
+        skillUsed = true;
+      } else if (lowestAlly) {
+        const healAmount = skill.healAmount + this.magicPower;
+        lowestAlly.hp = Math.min(lowestAlly.maxHp, lowestAlly.hp + healAmount);
+        this.createParticleBurst(lowestAlly.sprite.x, lowestAlly.sprite.y, 0x7ec8e3, 14);
+        this.addLog(`${skill.name}! 동료 HP +${healAmount}`, 'gain');
+        skillUsed = true;
       } else {
-        this.companionBuffEndTime = this.time.now + skill.buffDurationMs;
-        this.createParticleBurst(this.companionSprite.x, this.companionSprite.y, 0xc77dff, 18);
-        this.addLog(`${skill.name}! 동료가 강해졌어요`, 'gain');
+        const targetInfo = ENTITY_TYPES[nearbyTarget.entityType];
+        const isUndead = !!targetInfo.isUndead;
+        const holyMultiplier = isUndead ? 2.2 : 1.2;
+        const critBonus = isUndead ? 30 : 0;
+
+        const damageResult = this.calculateDamage(this.magicPower * holyMultiplier, critBonus);
+        nearbyTarget.hp -= damageResult.damage;
+        this.createParticleBurst(nearbyTarget.x, nearbyTarget.y, 0xfff2b3, 16);
+        this.addLog(`${skill.name}!${isUndead ? ' (언데드 특효)' : ''} ${damageResult.damage} 피해`, 'kill');
+
+        if (nearbyTarget.hp <= 0) this.defeatMonster(nearbyTarget, targetInfo);
+        skillUsed = true;
+      }
+
+      // 뭘 했든 상관없이, 사용할 때마다 본인+동료에게 짧은 성력 버프(방어력)를 걸어줌
+      if (skillUsed) {
+        this.bonusStats.defense += 3;
+        this.recalculateDerivedStats();
+        this.time.delayedCall(6000, () => {
+          this.bonusStats.defense -= 3;
+          this.recalculateDerivedStats();
+          this.syncStatsToReact();
+        });
+      }
+    } else if (this.playerClass === 'summoner') {
+      const spirit = this.allies.spirit;
+      if (!spirit.id) {
+        // 소환수가 없으면, Q키로 정령 하나를 무료로 소환함 (늑대 정령/고블린 정령 중 무작위)
+        // 용병(this.allies.mercenary)이 있어도 상관없이, 정령은 완전히 별개 슬롯에 소환돼요.
+        const spiritIds = ['spirit_wolf', 'spirit_goblin'];
+        const chosen = spiritIds[Phaser.Math.Between(0, spiritIds.length - 1)];
+        this.spawnAlly('spirit', chosen);
+        this.addLog(`${COMPANION_TYPES[chosen].name}을(를) 소환했어요!`, 'gain');
+        skillUsed = true;
+      } else if (!spirit.sprite) {
+        this.addLog('강화해줄 소환수가 없어요', 'info');
+      } else {
+        spirit.buffEndTime = this.time.now + skill.buffDurationMs;
+        this.createParticleBurst(spirit.sprite.x, spirit.sprite.y, 0xc77dff, 18);
+        this.addLog(`${skill.name}! 소환수가 강해졌어요`, 'gain');
         skillUsed = true;
       }
     }
@@ -2028,6 +2230,15 @@ export class GameScene extends Phaser.Scene {
     this.addLog(`${info.name} +1 획득`, 'gain');
     this.gainExp(info.exp);
     this.createParticleBurst(entity.x, entity.y, 0xff0000, 12);
+
+    // 소환사가 정령 없이 몬스터를 처치하면, 10% 확률로 테이밍에 성공해 정령을 얻음
+    // (용병을 따로 고용해뒀어도 상관없이, 정령은 독립된 슬롯이라 그대로 얻을 수 있어요)
+    if (this.playerClass === 'summoner' && !this.allies.spirit.id && Phaser.Math.Between(1, 100) <= 10) {
+      const spiritIds = ['spirit_wolf', 'spirit_goblin'];
+      const chosen = spiritIds[Phaser.Math.Between(0, spiritIds.length - 1)];
+      this.spawnAlly('spirit', chosen);
+      this.addLog(`몬스터를 길들여 ${COMPANION_TYPES[chosen].name}을(를) 얻었어요!`, 'gain');
+    }
 
     if (entity.encounterType === 'hunt') {
       if (entity.isBoss) this.tryDropRareItem(entity.encounterRankInfo);
@@ -2353,6 +2564,12 @@ export class GameScene extends Phaser.Scene {
 
   handleDeath(killerName) {
     this.addLog(`${killerName}에게 당했습니다...`, 'death');
+
+    // 사망 시 도적 은신 상태를 초기화해서, 부활 후 계속 반투명 상태로 남지 않게 해요.
+    if (this.rogueAmbushReady) {
+      this.rogueAmbushReady = false;
+      this.player.setAlpha(1);
+    }
 
     const expNeeded = this.level * 100;
     this.exp -= Math.floor(expNeeded * 0.3);

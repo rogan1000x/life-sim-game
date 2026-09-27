@@ -282,7 +282,7 @@ export const FIELD_ZONES = {
   north: {
     name: '북쪽 숲 필드', color: 0x2d6b2d,
     entrance: { x: 400, y: 30 },
-    monsters: [{ type: 'wolf', count: 5 }, { type: 'goblin', count: 2 }]
+    monsters: [{ type: 'wolf', count: 5 }, { type: 'goblin', count: 2 }, { type: 'skeleton', count: 3 }]
   },
   south: {
     name: '남쪽 평야 필드', color: 0x8b9a4a,
@@ -338,6 +338,12 @@ export const ENTITY_TYPES = {
     name: '도적', category: 'hostile_monster',
     exp: 55, color: 0x4a3728, radius: 20, sound: 130, hp: 40,
     damage: 14, speed: 90
+  },
+  skeleton: {
+    name: '스켈레톤', category: 'hostile_monster',
+    exp: 35, color: 0xcccccc, radius: 17, sound: 200, hp: 22,
+    damage: 8, speed: 60,
+    isUndead: true // 성직자의 언데드 특효 대상이 되는 표시
   }
 };
 
@@ -579,6 +585,23 @@ export const COMPANION_TYPES = {
     trait: { type: 'expBonus', value: 1.5 }, // 경험치 1.5배
     hireLine: '파이가 신나서 폴짝 뛰어요: "우와, 드디어 모험이다!"',
     description: '성장이 빨라요. 금방 강해지는 타입이에요'
+  },
+
+  // 아래 둘은 소환사 전용 "정령"이에요. 골드로 고용하는 게 아니라 소환/테이밍으로만
+  // 얻을 수 있어서 hireCost가 0이고, 주점 고용 목록에는 안 보이게 따로 필터링할 거예요.
+  // isSpiritSummon:true면 사람 그림(spriteKey) 대신 color/radius로 된 원으로 그려져요
+  // (몬스터를 닮은 정령이라는 느낌을 새 이미지 없이 표현하기 위함)
+  spirit_wolf: {
+    name: '늑대 정령', personality: '소환된 정령',
+    isSpiritSummon: true, color: 0x8899ff, radius: 20,
+    hireCost: 0, attackBonus: 6, maxHp: 70,
+    description: '늑대의 모습을 한 정령이에요'
+  },
+  spirit_goblin: {
+    name: '고블린 정령', personality: '소환된 정령',
+    isSpiritSummon: true, color: 0x66cc66, radius: 16,
+    hireCost: 0, attackBonus: 4, maxHp: 55,
+    description: '고블린의 모습을 한 정령이에요'
   }
 };
 
@@ -602,14 +625,14 @@ export const CLASS_ACTIVE_SKILLS = {
     description: '마력을 담은 화염구로 주변 몬스터 전부에게 피해를 줘요'
   },
   priest: {
-    id: 'active_priest_heal', name: '치유의 빛', key: 'Q', cooldownMs: 10000,
-    healAmount: 40, useMagicPower: true,
-    description: '스스로에게 즉시 체력을 회복시켜요 (고정 회복량 + 마력)'
+    id: 'active_priest_heal', name: '성스러운 축복', key: 'Q', cooldownMs: 8000,
+    healAmount: 40, range: 250, useMagicPower: true,
+    description: '상황에 맞춰 자힐/동료힐/성속성 공격(언데드 특효)이 자동으로 나가고, 매번 방어력 버프가 함께 걸려요'
   },
   rogue: {
-    id: 'active_rogue_shadowstrike', name: '그림자 일격', key: 'Q', cooldownMs: 7000,
-    range: 200, damageMultiplier: 1.8,
-    description: '가장 가까운 몬스터에게 반드시 치명타가 적중하는 일격을 가해요'
+    id: 'active_rogue_stealth', name: '은신', key: 'Q', cooldownMs: 9000,
+    stealthDurationMs: 5000, ambushMultiplier: 1.8,
+    description: '5초간 은신하고, 그 상태에서 다음 공격이 강력한 기습 치명타로 들어가요'
   },
   summoner: {
     id: 'active_summoner_empower', name: '소환수 강화', key: 'Q', cooldownMs: 12000,
