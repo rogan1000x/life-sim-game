@@ -6,6 +6,11 @@ import {
   DUNGEON_RANKS, DUNGEONS, FIELD_ZONES
 } from './gameConfig';
 
+// 고용할 수 있는 용병(동료) 슬롯 목록이에요. 슬롯 개수가 곧 "최대 동행 인원"이라서,
+// 정원을 늘리고 싶으면 여기에 'mercenary_3' 같은 이름을 추가하기만 하면 돼요.
+// 소환사의 정령('spirit')은 이 목록과 상관없는 별도 슬롯이라 정원에 포함되지 않아요.
+const MERCENARY_SLOTS = ['mercenary_0', 'mercenary_1', 'mercenary_2'];
+
 export class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -82,14 +87,11 @@ export class GameScene extends Phaser.Scene {
     this.isInsideField = false;
     this.currentFieldZone = null;
 
-    // 용병(동료)과 소환사의 정령을 완전히 독립된 두 유닛으로 관리해요.
-    // 예전에는 이 둘이 같은 변수(hiredCompanionId 등)를 공유해서, 정령을 소환하면
-    // 이미 고용한 용병 정보가 덮어써지는 문제가 있었어요. allies.mercenary / allies.spirit
-    // 로 완전히 분리해서 두 유닛을 동시에 데리고 다닐 수 있게 했어요.
-    this.allies = {
-      mercenary: this.createEmptyAllyState(),
-      spirit: this.createEmptyAllyState()
-    };
+    // 용병(동료)은 여러 명(MERCENARY_SLOTS 개수만큼), 소환사의 정령은 별도 1칸으로 관리해요.
+    // 전부 같은 모양의 상태 객체를 슬롯 이름(mercenary_0, mercenary_1, ..., spirit)으로 들고 있어서,
+    // 유닛끼리 서로 정보를 덮어쓰는 일이 없어요.
+    this.allies = {};
+    this.getAllySlots().forEach(slot => { this.allies[slot] = this.createEmptyAllyState(); });
 
     this.activeSkillCooldownEndTime = 0;
 
@@ -145,7 +147,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   getAllySlots() {
-    return ['mercenary', 'spirit'];
+    return [...MERCENARY_SLOTS, 'spirit'];
+  }
+
+  isMercenarySlot(slot) {
+    return MERCENARY_SLOTS.includes(slot);
+  }
+
+  // 플레이어 기준으로 각 유닛이 서 있을 자리예요. 용병들은 왼쪽 뒤에 세로로 나란히,
+  // 정령은 오른쪽에 서서 여러 유닛이 한 점에 겹치지 않게 해요.
+  getAllyFormationOffset(slot) {
+    const offsets = {
+      mercenary_0: { x: -70, y: 0 },
+      mercenary_1: { x: -70, y: 70 },
+      mercenary_2: { x: -70, y: -70 },
+      spirit: { x: 70, y: 0 }
+    };
+    return offsets[slot] || { x: -70, y: 0 };
+  }
+
+  // 로그에 "동료가"라고만 쓰면 여럿일 때 누군지 모르니, 유닛 이름을 꺼내주는 헬퍼예요.
+  getAllyName(slot) {
+    const id = this.allies[slot]?.id;
+    return (id && COMPANION_TYPES[id]?.name) || '동료';
   }
 
   preload() {
@@ -204,11 +228,15 @@ export class GameScene extends Phaser.Scene {
       if (data.equipmentDurability !== undefined) this.equipmentDurability = data.equipmentDurability;
       if (data.activeQuestIds !== undefined) this.activeQuestIds = data.activeQuestIds;
       if (data.allies !== undefined) {
+        // 예전(용병 1명) 저장 형식의 'mercenary' 키는 첫 번째 용병 슬롯으로 옮겨줘요.
+        const savedAllies = { ...data.allies };
+        if (savedAllies.mercenary && !savedAllies.mercenary_0) savedAllies.mercenary_0 = savedAllies.mercenary;
+
         this.getAllySlots().forEach(slot => {
-          if (data.allies[slot]) {
+          if (savedAllies[slot]) {
             this.allies[slot] = {
               ...this.createEmptyAllyState(),
-              ...data.allies[slot],
+              ...savedAllies[slot],
               sprite: null,
               overlapCollider: null,
               autoSkillTimer: null
@@ -219,10 +247,10 @@ export class GameScene extends Phaser.Scene {
         // 예전 저장 형식(용병 하나만 있던 시절) 호환용 마이그레이션이에요.
         let legacyId = data.hiredCompanionId;
         if (legacyId === 'traveler') legacyId = 'roy';
-        this.allies.mercenary.id = legacyId;
-        this.allies.mercenary.cls = data.companionClass ?? null;
-        this.allies.mercenary.level = data.companionLevel ?? 1;
-        this.allies.mercenary.exp = data.companionExp ?? 0;
+        this.allies.mercenary_0.id = legacyId;
+        this.allies.mercenary_0.cls = data.companionClass ?? null;
+        this.allies.mercenary_0.level = data.companionLevel ?? 1;
+        this.allies.mercenary_0.exp = data.companionExp ?? 0;
       }
       if (data.rank !== undefined) this.rank = data.rank;
       if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
@@ -827,13 +855,14 @@ export class GameScene extends Phaser.Scene {
       this.buildingNameText.setVisible(false);
       this.receptionistNpc = null;
 
-      this.getAllySlots().forEach((slot, idx) => {
+      this.getAllySlots().forEach(slot => {
         const ally = this.allies[slot];
         if (!ally.sprite) return;
+        const offset = this.getAllyFormationOffset(slot);
         ally.sprite.setVisible(true);
         ally.sprite.body.enable = true;
-        ally.sprite.x = this.player.x - 60 - idx * 40;
-        ally.sprite.y = this.player.y;
+        ally.sprite.x = this.player.x + offset.x;
+        ally.sprite.y = this.player.y + offset.y;
       });
 
       this.setOutdoorObjectsActive(true);
@@ -1120,20 +1149,11 @@ export class GameScene extends Phaser.Scene {
       ownedPlots: this.ownedPlots, plantedCrops: this.plantedCrops,
       equipmentDurability: this.equipmentDurability,
       activeQuestIds: this.activeQuestIds,
-      allies: {
-        mercenary: {
-          id: this.allies.mercenary.id,
-          cls: this.allies.mercenary.cls,
-          level: this.allies.mercenary.level,
-          exp: this.allies.mercenary.exp
-        },
-        spirit: {
-          id: this.allies.spirit.id,
-          cls: this.allies.spirit.cls,
-          level: this.allies.spirit.level,
-          exp: this.allies.spirit.exp
-        }
-      },
+      allies: this.getAllySlots().reduce((acc, slot) => {
+        const a = this.allies[slot];
+        acc[slot] = { id: a.id, cls: a.cls, level: a.level, exp: a.exp };
+        return acc;
+      }, {}),
       rank: this.rank, questsCompletedCount: this.questsCompletedCount,
       playerClass: this.playerClass,
       skillPoints: this.skillPoints, skillLevels: this.skillLevels,
@@ -1169,11 +1189,14 @@ export class GameScene extends Phaser.Scene {
         marketStock: { ...this.marketStock },
         equipmentDurability: { ...this.equipmentDurability },
         activeQuestIds: [...this.activeQuestIds],
-        // 기존 UI 호환을 위해 "동료"(용병) 정보는 예전 키 이름 그대로 내려줘요.
-        hiredCompanionId: this.allies.mercenary.id,
-        companionClass: this.allies.mercenary.cls,
-        companionLevel: this.allies.mercenary.level,
-        companionExp: this.allies.mercenary.exp,
+        // 고용한 동료(용병) 목록이에요. 여러 명이라 배열로 내려주고, UI는 이 배열을 그대로 돌려서 그려요.
+        mercenaries: MERCENARY_SLOTS
+          .filter(slot => this.allies[slot].id)
+          .map(slot => {
+            const a = this.allies[slot];
+            return { slot, id: a.id, cls: a.cls, level: a.level, exp: a.exp, hp: a.hp, maxHp: a.maxHp };
+          }),
+        maxMercenaries: MERCENARY_SLOTS.length,
         // 소환사의 정령은 용병과 완전히 별개 유닛이라 새 키로 따로 내려줘요.
         // (화면에 표시하려면 UI 쪽에도 이 키들을 읽는 코드가 추가로 필요해요)
         spiritCompanionId: this.allies.spirit.id,
@@ -1659,13 +1682,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   hireCompanion(companionId) {
-    if (this.allies.mercenary.id) {
-      this.addLog('이미 용병이 있어요. 먼저 해고해주세요', 'info');
+    const info = COMPANION_TYPES[companionId];
+    if (!info || info.isSpiritSummon) return;
+
+    // 같은 사람을 두 번 고용할 수는 없어요 (로이가 둘이 되면 이상하니까요)
+    if (MERCENARY_SLOTS.some(slot => this.allies[slot].id === companionId)) {
+      this.addLog(`${info.name}은(는) 이미 함께하고 있어요`, 'info');
       return;
     }
 
-    const info = COMPANION_TYPES[companionId];
-    if (!info) return;
+    const freeSlot = MERCENARY_SLOTS.find(slot => !this.allies[slot].id);
+    if (!freeSlot) {
+      this.addLog(`동료는 최대 ${MERCENARY_SLOTS.length}명까지 데리고 다닐 수 있어요. 먼저 해고해주세요`, 'info');
+      return;
+    }
 
     if (this.gold < info.hireCost) {
       this.addLog('골드가 부족해서 고용할 수 없어요', 'death');
@@ -1677,7 +1707,7 @@ export class GameScene extends Phaser.Scene {
     const classIds = Object.keys(CLASS_TYPES);
     const assignedClass = classIds[Phaser.Math.Between(0, classIds.length - 1)];
 
-    this.spawnAlly('mercenary', companionId, { cls: assignedClass });
+    this.spawnAlly(freeSlot, companionId, { cls: assignedClass });
 
     const assignedClassInfo = CLASS_TYPES[assignedClass];
     this.addLog(`${info.name}을(를) 고용했어요! (${assignedClassInfo.icon} ${assignedClassInfo.name})`, 'gain');
@@ -1685,8 +1715,10 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
-  dismissCompanion() {
-    this.dismissAlly('mercenary', '동료');
+  // slot은 'mercenary_0' 같은 슬롯 이름이에요. 여러 명 중 누구를 해고할지 알려줘야 해서 필수예요.
+  dismissCompanion(slot) {
+    if (!this.isMercenarySlot(slot)) return;
+    this.dismissAlly(slot, '동료');
   }
 
   dismissSpirit() {
@@ -1726,12 +1758,12 @@ export class GameScene extends Phaser.Scene {
 
     const ally = this.allies[slot];
 
+    // level/exp는 여기서 덮어쓰지 않아요. 새로 고용/소환할 때는 슬롯이 비어있어서 기본값(1/0)이고,
+    // 저장 데이터를 불러와 다시 소환할 때는 저장된 레벨/경험치가 그대로 유지돼야 하니까요.
     ally.id = companionId;
-    ally.cls = options.cls !== undefined ? options.cls : null;
-    ally.level = 1;
-    ally.exp = 0;
-    ally.maxHp = info.maxHp;
-    ally.hp = info.maxHp;
+    ally.cls = options.cls !== undefined ? options.cls : ally.cls;
+    ally.maxHp = info.maxHp + (ally.level - 1) * 10; // 레벨업마다 최대체력 +10이 붙는 규칙과 맞춤
+    ally.hp = ally.maxHp;
     ally.isKO = false;
     ally.isSpiritSummon = !!info.isSpiritSummon;
     ally.buffEndTime = 0;
@@ -1739,9 +1771,9 @@ export class GameScene extends Phaser.Scene {
 
     // 슬롯마다 위치를 살짝 다르게 잡아서(용병은 왼쪽, 정령은 오른쪽) 두 유닛이
     // 서로 완전히 겹쳐서 소환되지 않게 해요.
-    const sideOffset = slot === 'spirit' ? 60 : -60;
-    const spawnX = this.player.x + sideOffset;
-    const spawnY = this.player.y;
+    const spawnOffset = this.getAllyFormationOffset(slot);
+    const spawnX = this.player.x + spawnOffset.x;
+    const spawnY = this.player.y + spawnOffset.y;
 
     if (info.isSpiritSummon) {
       // 정령은 사람 그림이 아니라 색깔 있는 원으로 표현해요 (몬스터를 닮은 정령이라는 느낌)
@@ -1773,7 +1805,7 @@ export class GameScene extends Phaser.Scene {
       const actualDamage = Math.round(info2.damage * (1 - reductionPercent / 100));
 
       ally.hp -= actualDamage;
-      this.addLog(`동료가 ${info2.name}에게 ${actualDamage} 피해를 입음`, 'death');
+      this.addLog(`${this.getAllyName(slot)}이(가) ${info2.name}에게 ${actualDamage} 피해를 입음`, 'death');
 
       if (ally.hp <= 0) {
         this.handleAllyKO(slot);
@@ -1789,7 +1821,7 @@ export class GameScene extends Phaser.Scene {
     ally.sprite.setVisible(false);
     ally.sprite.body.enable = false;
 
-    this.addLog('동료가 쓰러졌어요...', 'death');
+    this.addLog(`${this.getAllyName(slot)}이(가) 쓰러졌어요...`, 'death');
 
     this.time.delayedCall(15000, () => {
       if (!ally.sprite) return;
@@ -1797,10 +1829,10 @@ export class GameScene extends Phaser.Scene {
       ally.hp = ally.maxHp;
       ally.sprite.setVisible(true);
       ally.sprite.body.enable = true;
-      const sideOffset = slot === 'spirit' ? 60 : -60;
-      ally.sprite.x = this.player.x + sideOffset;
-      ally.sprite.y = this.player.y;
-      this.addLog('동료가 다시 일어났어요', 'gain');
+      const reviveOffset = this.getAllyFormationOffset(slot);
+      ally.sprite.x = this.player.x + reviveOffset.x;
+      ally.sprite.y = this.player.y + reviveOffset.y;
+      this.addLog(`${this.getAllyName(slot)}이(가) 다시 일어났어요`, 'gain');
     });
   }
 
@@ -1877,9 +1909,9 @@ export class GameScene extends Phaser.Scene {
 
     // 슬롯마다 따라다니는 위치를 살짝 다르게 둬서(용병은 왼쪽 뒤, 정령은 오른쪽 뒤),
     // 두 유닛을 동시에 데리고 다닐 때 같은 자리로 몰려서 겹치지 않게 해요.
-    const followOffsetX = slot === 'spirit' ? 70 : -70;
-    const followTargetX = this.player.x + followOffsetX;
-    const followTargetY = this.player.y;
+    const followOffset = this.getAllyFormationOffset(slot);
+    const followTargetX = this.player.x + followOffset.x;
+    const followTargetY = this.player.y + followOffset.y;
     const followDistance = 40;
 
     const distanceToFollowPoint = Phaser.Math.Distance.Between(
@@ -1929,7 +1961,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     target.hp -= damage;
-    this.addLog(isCompanionCrit ? `동료의 강타! ${targetInfo.name}에게 ${damage} 피해` : `동료가 ${targetInfo.name}에게 ${damage} 피해`, 'kill');
+    this.addLog(isCompanionCrit ? `${this.getAllyName(slot)}의 강타! ${targetInfo.name}에게 ${damage} 피해` : `${this.getAllyName(slot)}이(가) ${targetInfo.name}에게 ${damage} 피해`, 'kill');
     this.createParticleBurst(target.x, target.y, 0xffe066, isCompanionCrit ? 12 : 6);
 
     this.gainAllyExp(slot, 3);
@@ -1949,7 +1981,7 @@ export class GameScene extends Phaser.Scene {
       ally.level++;
       ally.maxHp += 10;
       ally.hp = ally.maxHp;
-      this.addLog(`동료가 레벨 ${ally.level}(으)로 성장했어요!`, 'gain');
+      this.addLog(`${this.getAllyName(slot)}이(가) 레벨 ${ally.level}(으)로 성장했어요!`, 'gain');
       if (ally.sprite) this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0x7cc576, 12);
     }
 
@@ -1992,7 +2024,7 @@ export class GameScene extends Phaser.Scene {
       const targetInfo = ENTITY_TYPES[target.entityType];
       target.hp -= baseDamage;
       this.createParticleBurst(target.x, target.y, 0xffe066, 10);
-      this.addLog(`동료의 ${skill.name}! ${baseDamage} 피해`, 'kill');
+      this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! ${baseDamage} 피해`, 'kill');
       this.gainAllyExp(slot, 5);
 
       if (target.hp <= 0) this.defeatMonster(target, targetInfo);
@@ -2014,14 +2046,14 @@ export class GameScene extends Phaser.Scene {
         }
       });
 
-      this.addLog(`동료의 ${skill.name}! 광역 피해`, 'kill');
+      this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! 광역 피해`, 'kill');
       this.gainAllyExp(slot, 5);
     } else if (ally.cls === 'priest') {
       const healAmount = Math.round(skill.healAmount / 2);
       this.hp = Math.min(this.maxHp, this.hp + healAmount);
       this.hpText.setText('HP: ' + this.hp);
       this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 10);
-      this.addLog(`동료의 ${skill.name}! HP +${healAmount}`, 'gain');
+      this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! HP +${healAmount}`, 'gain');
       this.gainAllyExp(slot, 4);
       this.syncStatsToReact();
     } else if (ally.cls === 'summoner') {
@@ -2029,7 +2061,7 @@ export class GameScene extends Phaser.Scene {
       this.bonusStats.attack += buffAmount;
       this.recalculateDerivedStats();
       this.createParticleBurst(this.player.x, this.player.y, 0xc77dff, 10);
-      this.addLog(`동료의 ${skill.name}! 공격력이 잠시 강해졌어요`, 'gain');
+      this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! 공격력이 잠시 강해졌어요`, 'gain');
       this.gainAllyExp(slot, 4);
 
       this.time.delayedCall(skill.buffDurationMs, () => {
@@ -2245,7 +2277,7 @@ export class GameScene extends Phaser.Scene {
       const spirit = this.allies.spirit;
       if (!spirit.id) {
         // 소환수가 없으면, Q키로 정령 하나를 무료로 소환함 (늑대 정령/고블린 정령 중 무작위)
-        // 용병(this.allies.mercenary)이 있어도 상관없이, 정령은 완전히 별개 슬롯에 소환돼요.
+        // 용병(mercenary_*)이 몇 명 있든 상관없이, 정령은 완전히 별개 슬롯에 소환돼요.
         const spiritIds = ['spirit_wolf', 'spirit_goblin'];
         const chosen = spiritIds[Phaser.Math.Between(0, spiritIds.length - 1)];
         this.spawnAlly('spirit', chosen);

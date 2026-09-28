@@ -310,7 +310,7 @@ function App() {
           bottom: '10px',
           left: '10px',
           display: 'flex',
-          flexDirection: 'column-reverse',
+          flexDirection: 'column', // 오래된 로그가 위, 새 로그가 아래 (bottom 기준 고정이라 새 로그가 쌓이면 위로 밀려 올라감)
           gap: '4px',
           zIndex: 500,
           fontFamily: 'monospace',
@@ -927,45 +927,71 @@ function App() {
                 🤝 동료
               </h4>
 
-              {playerStats.hiredCompanionId ? (
-                <div style={{ marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>
-                      현재 동료: {COMPANION_TYPES[playerStats.hiredCompanionId]?.name}
-                      ({COMPANION_TYPES[playerStats.hiredCompanionId]?.personality})
-                      {playerStats.companionClass && ` · ${CLASS_TYPES[playerStats.companionClass]?.icon} ${CLASS_TYPES[playerStats.companionClass]?.name}`}
-                    </span>
-                    <button onClick={() => sceneRef.current.dismissCompanion()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
-                      해고
-                    </button>
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
-                    Lv.{playerStats.companionLevel || 1} (EXP {playerStats.companionExp || 0})
-                  </div>
-                </div>
-              ) : (
-                Object.entries(COMPANION_TYPES).filter(([id, info]) => !info.isSpiritSummon).map(([companionId, info]) => {
-                  const canAfford = playerStats.gold >= info.hireCost;
-                  return (
-                    <div key={companionId} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
-                    }}>
-                      <span>
-                        <strong>{info.name}</strong> ({info.personality}) · {info.description}
-                      </span>
-                      <button
-                        onClick={() => sceneRef.current.hireCompanion(companionId)}
-                        disabled={!canAfford}
-                        style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
-                      >
-                        고용 {formatCurrency(info.hireCost)}
-                      </button>
-                    </div>
-                  );
-                })
-              )}
+              {/* 동료(용병)는 여러 명을 데리고 다닐 수 있어요. mercenaries 배열의 각 항목이 한 명이고,
+                  정원(maxMercenaries)이 다 차기 전까지는 아래 고용 목록도 함께 보여줘요.
+                  소환사의 정령은 이 정원과 상관없는 별도 슬롯이라 바로 아래 "정령" 섹션에서 따로 다뤄요. */}
+              {(() => {
+                const mercs = playerStats.mercenaries || [];
+                const maxMercs = playerStats.maxMercenaries || 3;
+                const hiredIds = mercs.map(m => m.id);
+                const isFull = mercs.length >= maxMercs;
 
-              {/* 소환사의 정령이에요. 용병(hiredCompanionId)과는 완전히 별개 슬롯이라, 용병이
+                return (
+                  <>
+                    <p style={{ fontSize: '12px', color: '#c9a66b', margin: '0 0 8px' }}>
+                      함께하는 동료 {mercs.length}/{maxMercs}
+                    </p>
+
+                    {mercs.map(m => (
+                      <div key={m.slot} style={{ marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>
+                            {COMPANION_TYPES[m.id]?.name}
+                            ({COMPANION_TYPES[m.id]?.personality})
+                            {m.cls && ` · ${CLASS_TYPES[m.cls]?.icon} ${CLASS_TYPES[m.cls]?.name}`}
+                          </span>
+                          <button onClick={() => sceneRef.current.dismissCompanion(m.slot)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                            해고
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
+                          Lv.{m.level || 1} (EXP {m.exp || 0}) · HP {Math.max(0, Math.round(m.hp))}/{m.maxHp}
+                        </div>
+                      </div>
+                    ))}
+
+                    {isFull ? (
+                      <p style={{ fontSize: '12px', color: '#a8927a', marginBottom: '16px' }}>
+                        동료 정원이 가득 찼어요. 새로 고용하려면 먼저 해고해주세요.
+                      </p>
+                    ) : (
+                      Object.entries(COMPANION_TYPES)
+                        .filter(([id, info]) => !info.isSpiritSummon && !hiredIds.includes(id))
+                        .map(([companionId, info]) => {
+                          const canAfford = playerStats.gold >= info.hireCost;
+                          return (
+                            <div key={companionId} style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'
+                            }}>
+                              <span>
+                                <strong>{info.name}</strong> ({info.personality}) · {info.description}
+                              </span>
+                              <button
+                                onClick={() => sceneRef.current.hireCompanion(companionId)}
+                                disabled={!canAfford}
+                                style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: canAfford ? 1 : 0.4, cursor: canAfford ? 'pointer' : 'not-allowed' }}
+                              >
+                                고용 {formatCurrency(info.hireCost)}
+                              </button>
+                            </div>
+                          );
+                        })
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* 소환사의 정령이에요. 용병(mercenaries)과는 완전히 별개 슬롯이라, 용병이
                   있든 없든 상관없이 따로 표시해요. 정령은 골드로 고용하는 게 아니라 소환사가
                   Q키를 쓰거나(무료 소환) 몬스터 처치 시 10% 확률로 테이밍해서 얻기 때문에,
                   여기엔 "고용" 버튼 없이 현재 상태 확인 + 놓아주기 버튼만 둬요. */}
