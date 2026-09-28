@@ -95,6 +95,7 @@ export class GameScene extends Phaser.Scene {
 
     // 도적 은신 관련 상태예요.
     this.rogueAmbushReady = false; // true면 "다음 공격이 기습(무조건 치명타)"으로 처리됨
+    this.rogueStealthTimer = null; // 은신 자동 해제 타이머 (새 은신이 옛 타이머에 끊기지 않게 기억해둠)
 
     this.onStatsUpdate = null;
     this.onShopToggle = null;
@@ -109,6 +110,20 @@ export class GameScene extends Phaser.Scene {
     this.isPaused = false;
     this.soundVolume = 100;
     this.brightnessPercent = 100;
+  }
+
+  // 은신을 푸는 공통 함수예요. 공격 성공/피격/시간 초과/사망 어느 경우든 여기로 모아서,
+  // 상태(rogueAmbushReady), 투명도, 자동 해제 타이머를 한 번에 확실히 정리해요.
+  breakStealth(message = null) {
+    if (this.rogueStealthTimer) {
+      this.rogueStealthTimer.remove();
+      this.rogueStealthTimer = null;
+    }
+    if (!this.rogueAmbushReady) return;
+
+    this.rogueAmbushReady = false;
+    if (this.player) this.player.setAlpha(1);
+    if (message) this.addLog(message, 'info');
   }
 
   createEmptyAllyState() {
@@ -303,6 +318,7 @@ export class GameScene extends Phaser.Scene {
       this.hpText.setText('HP: ' + this.hp);
       this.addLog(`${info.name}에게 ${actualDamage} 피해를 입음`, 'death');
       this.playHitSound();
+      this.breakStealth('공격을 받아 은신이 풀렸어요!');
 
       if (this.hp <= 0 && !this.isDead) {
         this.isDead = true;
@@ -398,6 +414,11 @@ export class GameScene extends Phaser.Scene {
       this.fieldGateObjects[zoneId] = { gateSprite: entrance, label };
     });
 
+    // 용병/정령 머리 위에 HP바를 그려줄 Graphics 하나예요. 매 프레임 clear() 후 다시 그리는 방식이라
+    // 유닛마다 오브젝트를 만들고 지울 필요가 없어서(=유령 오브젝트 걱정이 없어서) 가장 안전해요.
+    this.allyHpBarGraphics = this.add.graphics();
+    this.allyHpBarGraphics.setDepth(500);
+
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, { fontSize: '20px', color: '#ff4444' });
 
     this.buildingNameText = this.add.text(400, 20, '', {
@@ -437,6 +458,7 @@ export class GameScene extends Phaser.Scene {
     this.updateGameClock(delta);
 
     if (this.isInsideHouse) {
+      this.allyHpBarGraphics.clear();
       this.handleMovement();
       this.checkHouseExit();
       this.handleReceptionistInteract();
@@ -445,6 +467,7 @@ export class GameScene extends Phaser.Scene {
 
     this.handleMovement();
     this.updateAlliesFollow();
+    this.drawAllyHpBars();
 
     const cooldownRemaining = Math.max(0, this.activeSkillCooldownEndTime - this.time.now);
     if (this.onCooldownUpdate) this.onCooldownUpdate(cooldownRemaining);
@@ -535,8 +558,7 @@ export class GameScene extends Phaser.Scene {
           let damageResult;
           // 도적이 은신 중 "기습 준비"가 된 상태라면, 확률 계산 없이 무조건 치명타 + 추가 배율로 처리함
           if (this.playerClass === 'rogue' && this.rogueAmbushReady) {
-            this.rogueAmbushReady = false;
-            this.player.setAlpha(1); // 기습에 성공하면 은신이 풀리며 다시 또렷하게 보임
+            this.breakStealth(); // 기습에 성공하면 은신이 풀리며 다시 또렷하게 보임
             const skill = CLASS_ACTIVE_SKILLS.rogue;
             const ambushDamage = Math.round(baseAttackPower * (this.critDamage / 100) * skill.ambushMultiplier);
             damageResult = { damage: ambushDamage, isCrit: true };
@@ -1782,6 +1804,31 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // 용병/정령 머리 위에 작은 HP바를 그려요. 쓰러진(KO) 유닛은 스프라이트가 숨겨져 있으니 바도 안 그려요.
+  // 색은 체력 비율에 따라 초록(60%↑) → 노랑(30%↑) → 빨강으로 바뀌어요.
+  drawAllyHpBars() {
+    const g = this.allyHpBarGraphics;
+    g.clear();
+
+    const barWidth = 44;
+    const barHeight = 6;
+
+    this.getAllySlots().forEach(slot => {
+      const ally = this.allies[slot];
+      if (!ally.sprite || ally.isKO || ally.maxHp <= 0) return;
+
+      const ratio = Phaser.Math.Clamp(ally.hp / ally.maxHp, 0, 1);
+      const x = ally.sprite.x - barWidth / 2;
+      const y = ally.sprite.y - ally.sprite.displayHeight / 2 - 12;
+      const fillColor = ratio > 0.6 ? 0x4caf50 : ratio > 0.3 ? 0xffc107 : 0xf44336;
+
+      g.fillStyle(0x000000, 0.7);
+      g.fillRect(x - 1, y - 1, barWidth + 2, barHeight + 2);
+      g.fillStyle(fillColor, 1);
+      g.fillRect(x, y, barWidth * ratio, barHeight);
+    });
+  }
+
   updateAlliesFollow() {
     this.getAllySlots().forEach(slot => this.updateAllyFollow(slot));
   }
@@ -2111,12 +2158,8 @@ export class GameScene extends Phaser.Scene {
         // gameConfig의 stealthDurationMs 동안 공격을 안 했으면 은신이 자동으로 풀리게 해요.
         // (공격에 성공하면 update()의 근접 공격 코드에서 이미 rogueAmbushReady를 꺼주니까,
         // 여기서는 "시간 초과로 안 쓰인 경우"만 정리해주면 돼요)
-        this.time.delayedCall(stealthDurationMs, () => {
-          if (this.rogueAmbushReady) {
-            this.rogueAmbushReady = false;
-            this.player.setAlpha(1);
-            this.addLog('은신이 풀렸어요', 'info');
-          }
+        this.rogueStealthTimer = this.time.delayedCall(stealthDurationMs, () => {
+          this.breakStealth('은신이 풀렸어요');
         });
       }
     } else if (this.playerClass === 'mage') {
@@ -2570,10 +2613,7 @@ export class GameScene extends Phaser.Scene {
     this.addLog(`${killerName}에게 당했습니다...`, 'death');
 
     // 사망 시 도적 은신 상태를 초기화해서, 부활 후 계속 반투명 상태로 남지 않게 해요.
-    if (this.rogueAmbushReady) {
-      this.rogueAmbushReady = false;
-      this.player.setAlpha(1);
-    }
+    this.breakStealth();
 
     const expNeeded = this.level * 100;
     this.exp -= Math.floor(expNeeded * 0.3);
