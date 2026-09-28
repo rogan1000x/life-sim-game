@@ -11,6 +11,11 @@ import {
 // 소환사의 정령('spirit')은 이 목록과 상관없는 별도 슬롯이라 정원에 포함되지 않아요.
 const MERCENARY_SLOTS = ['mercenary_0', 'mercenary_1', 'mercenary_2'];
 
+// 플레이어가 경험치를 얻을 때, 함께하는 동료/정령도 그 몇 배만큼 같이 얻을지 정하는 비율이에요.
+// 1.0이면 플레이어와 똑같이, 0.5면 절반만 받아요. 동료의 레벨업 기준(레벨x20)이 플레이어(레벨x100)보다
+// 훨씬 가벼워서 동료가 너무 빨리 크면 이 값을 낮춰서 조절하면 돼요.
+const ALLY_SHARED_EXP_RATIO = 1.0;
+
 export class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -79,6 +84,14 @@ export class GameScene extends Phaser.Scene {
     this.currentDungeonGate = null;
     this.dungeonWaveRemaining = 0;
     this.dungeonExitGate = null;
+    // 출구 문 주변의 빛/글자 오브젝트와 반짝임 트윈이에요. 나갈 때 한꺼번에 정리해야 해서 기억해둬요.
+    this.dungeonExitObjects = [];
+    this.dungeonExitTween = null;
+    this.lastDungeonRemainingShown = -1;
+
+    // 소모품 단축키(1~9, 0=10번) 등록 목록이에요. 칸마다 아이템 id(또는 null)가 들어가요.
+    this.hotbar = new Array(10).fill(null);
+    this.hotbarKeys = [];
 
     // 동서남북 별도 필드 관련 상태예요. 던전과 달리 "클리어해야 나감" 조건이 없고,
     // 언제든 H키로 나갈 수 있는 자유로운 공간이에요.
@@ -252,6 +265,9 @@ export class GameScene extends Phaser.Scene {
         this.allies.mercenary_0.level = data.companionLevel ?? 1;
         this.allies.mercenary_0.exp = data.companionExp ?? 0;
       }
+      if (Array.isArray(data.hotbar)) {
+        this.hotbar = Array.from({ length: 10 }, (_, i) => data.hotbar[i] ?? null);
+      }
       if (data.rank !== undefined) this.rank = data.rank;
       if (data.questsCompletedCount !== undefined) this.questsCompletedCount = data.questsCompletedCount;
       if (data.playerClass !== undefined) this.playerClass = data.playerClass;
@@ -329,6 +345,11 @@ export class GameScene extends Phaser.Scene {
     this.fKey = this.input.keyboard.addKey('F');
     this.qKey = this.input.keyboard.addKey('Q');
     this.gKey = this.input.keyboard.addKey('G');
+
+    // 소모품 단축키 1~9, 0(=10번)이에요. addKey의 두 번째 값(false)은 "브라우저 기본 동작을 막지 않음"이라는
+    // 뜻인데, 이걸 안 끄면 Admin 패널의 레벨 입력창 같은 곳에 숫자를 못 치게 되기 때문에 꼭 필요해요.
+    const hotbarKeyNames = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO'];
+    this.hotbarKeys = hotbarKeyNames.map(name => this.input.keyboard.addKey(name, false));
 
     this.physics.add.collider(this.player, this.entities);
 
@@ -484,6 +505,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isPaused) return;
 
     this.updateGameClock(delta);
+    this.handleHotbarInput(); // 집 안에서도 포션은 쓸 수 있어야 해서, 실내 분기보다 먼저 처리해요
 
     if (this.isInsideHouse) {
       this.allyHpBarGraphics.clear();
@@ -1154,6 +1176,7 @@ export class GameScene extends Phaser.Scene {
         acc[slot] = { id: a.id, cls: a.cls, level: a.level, exp: a.exp };
         return acc;
       }, {}),
+      hotbar: this.hotbar,
       rank: this.rank, questsCompletedCount: this.questsCompletedCount,
       playerClass: this.playerClass,
       skillPoints: this.skillPoints, skillLevels: this.skillLevels,
@@ -1197,6 +1220,7 @@ export class GameScene extends Phaser.Scene {
             return { slot, id: a.id, cls: a.cls, level: a.level, exp: a.exp, hp: a.hp, maxHp: a.maxHp };
           }),
         maxMercenaries: MERCENARY_SLOTS.length,
+        hotbar: [...this.hotbar],
         // 소환사의 정령은 용병과 완전히 별개 유닛이라 새 키로 따로 내려줘요.
         // (화면에 표시하려면 UI 쪽에도 이 키들을 읽는 코드가 추가로 필요해요)
         spiritCompanionId: this.allies.spirit.id,
@@ -1229,6 +1253,16 @@ export class GameScene extends Phaser.Scene {
   gainExp(amount) {
     this.addLog(`+${amount} EXP`, 'gain');
     this.exp += amount;
+
+    // 함께하는 동료(용병들)와 정령도 같이 경험치를 나눠 받아요. 각자 성격(expBonus 등)은
+    // gainAllyExp 안에서 그대로 적용되고, 마지막에 아래 syncStatsToReact() 한 번으로 화면에 반영해요.
+    const sharedExp = Math.round(amount * ALLY_SHARED_EXP_RATIO);
+    if (sharedExp > 0) {
+      this.getAllySlots().forEach(slot => {
+        if (this.allies[slot].id) this.gainAllyExp(slot, sharedExp, true);
+      });
+    }
+
     const expNeeded = this.level * 100;
 
     if (this.exp >= expNeeded) {
@@ -1660,6 +1694,68 @@ export class GameScene extends Phaser.Scene {
     this.syncStatsToReact();
   }
 
+  // 숫자키를 눌렀는지 확인해서 해당 칸의 아이템을 써요.
+  // 입력창/선택창에 글자를 치는 중이면(예: Admin 패널 레벨 입력) 단축키로 오작동하지 않게 무시해요.
+  handleHotbarInput() {
+    const active = document.activeElement;
+    const isTyping = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+
+    this.hotbarKeys.forEach((key, index) => {
+      if (!Phaser.Input.Keyboard.JustDown(key)) return;
+      if (isTyping) return;
+      this.useHotbarSlot(index);
+    });
+  }
+
+  // index는 0~9 (화면에 보이는 번호는 1~9, 0). 키보드와 화면 클릭 둘 다 이 함수를 써요.
+  useHotbarSlot(index) {
+    const label = (index + 1) % 10;
+    const itemId = this.hotbar[index];
+
+    if (!itemId) {
+      this.addLog(`단축키 ${label}번이 비어있어요`, 'info');
+      return;
+    }
+
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item) return;
+
+    if (!this.inventory[itemId] || this.inventory[itemId] <= 0) {
+      this.addLog(`${item.name}이(가) 없어요`, 'info');
+      return;
+    }
+
+    // 체력이 가득인데 회복 아이템을 눌러서 헛되이 소모하는 일이 없게 막아줘요
+    if (item.effectType === 'heal' && this.hp >= this.maxHp) {
+      this.addLog('체력이 이미 가득해요', 'info');
+      return;
+    }
+
+    this.useItem(itemId, 1);
+  }
+
+  // 단축키 칸에 소모품을 등록해요. 같은 아이템이 다른 칸에 이미 있으면 그쪽은 비우고 옮겨와요.
+  setHotbarSlot(index, itemId) {
+    if (!Number.isInteger(index) || index < 0 || index > 9) return;
+
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item || item.category !== 'consumable') return;
+
+    this.hotbar = this.hotbar.map(id => (id === itemId ? null : id));
+    this.hotbar[index] = itemId;
+
+    this.addLog(`${item.name}을(를) 단축키 ${(index + 1) % 10}번에 등록했어요`, 'info');
+    this.syncStatsToReact();
+  }
+
+  clearHotbarSlot(index) {
+    if (!Number.isInteger(index) || index < 0 || index > 9) return;
+    if (!this.hotbar[index]) return;
+
+    this.hotbar[index] = null;
+    this.syncStatsToReact();
+  }
+
   useItem(itemId, quantity = 1) {
     if (!this.inventory[itemId] || this.inventory[itemId] <= 0) return;
 
@@ -1969,23 +2065,30 @@ export class GameScene extends Phaser.Scene {
     if (target.hp <= 0) this.defeatMonster(target, targetInfo);
   }
 
-  gainAllyExp(slot, amount) {
+  // skipSync: 여러 유닛에게 연달아 경험치를 줄 때, 매번 화면 갱신/저장을 하지 않고
+  // 호출한 쪽(gainExp)이 마지막에 한 번만 하게 하려고 만든 옵션이에요.
+  gainAllyExp(slot, amount, skipSync = false) {
     const ally = this.allies[slot];
     const companionInfo = COMPANION_TYPES[ally.id];
     const expMultiplier = companionInfo?.trait?.type === 'expBonus' ? companionInfo.trait.value : 1;
     ally.exp += Math.round(amount * expMultiplier);
-    const expNeeded = ally.level * 20;
 
-    if (ally.exp >= expNeeded) {
-      ally.exp -= expNeeded;
+    // 한 번에 큰 경험치를 받으면 여러 레벨이 한꺼번에 오를 수 있어서 while로 반복해요.
+    let leveledUp = false;
+    while (ally.exp >= ally.level * 20) {
+      ally.exp -= ally.level * 20;
       ally.level++;
       ally.maxHp += 10;
       ally.hp = ally.maxHp;
-      this.addLog(`${this.getAllyName(slot)}이(가) 레벨 ${ally.level}(으)로 성장했어요!`, 'gain');
-      if (ally.sprite) this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0x7cc576, 12);
+      leveledUp = true;
     }
 
-    this.syncStatsToReact();
+    if (leveledUp) {
+      this.addLog(`${this.getAllyName(slot)}이(가) 레벨 ${ally.level}(으)로 성장했어요!`, 'gain');
+      if (ally.sprite && !ally.isKO) this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0x7cc576, 12);
+    }
+
+    if (!skipSync) this.syncStatsToReact();
   }
 
   startAllyAutoSkillTimer(slot) {
@@ -2300,6 +2403,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   defeatMonster(entity, info) {
+    // 같은 몬스터가 한 프레임에 두 번 처치 처리되는 걸 막아요 (예: 플레이어 공격과 동료 공격이 동시에
+    // 마무리한 경우). 막지 않으면 전리품/경험치가 두 번 들어가고, 던전 남은 몬스터 수도 두 번 깎여요.
+    if (entity.isDefeated) return;
+    entity.isDefeated = true;
+
     this.addToInventory(entity.entityType);
     this.totalMonsterKills++;
 
@@ -2348,6 +2456,7 @@ export class GameScene extends Phaser.Scene {
     this.refreshEntityVisual(entity);
 
     setTimeout(() => {
+      entity.isDefeated = false; // 리스폰하면 다시 처치할 수 있어야 해요
       entity.hp = entity.maxHp;
       entity.x = Phaser.Math.Between(50, 750);
       entity.y = Phaser.Math.Between(50, 550);
@@ -2432,6 +2541,9 @@ export class GameScene extends Phaser.Scene {
   enterDungeon(dungeonConfig) {
     if (this.isInsideDungeon) return;
 
+    this.cleanupDungeonExitObjects(); // 혹시 이전 출구 흔적이 남아있으면 먼저 정리
+    this.lastDungeonRemainingShown = -1;
+
     const rankInfo = DUNGEON_RANKS[dungeonConfig.rank];
 
     this.isInsideDungeon = true;
@@ -2468,43 +2580,136 @@ export class GameScene extends Phaser.Scene {
     this.addLog(`${rankInfo.name} 입장! 몬스터 ${spawnedCount}마리 출현`, 'info');
   }
 
-  spawnDungeonExitDoor() {
+  // 던전 몬스터가 전부 사라졌는지 직접 세어서 확인해요. 처치할 때마다 숫자를 깎는 방식만 쓰면
+  // 어떤 이유로든 숫자가 어긋났을 때 출구가 영영 안 열릴 수 있어서, 살아있는 몬스터를 직접 세는
+  // 안전장치를 함께 둬요. 남은 마리 수 안내 문구도 여기서 갱신해요.
+  checkDungeonCleared() {
     if (this.dungeonExitGate) return;
 
-    const door = this.add.rectangle(400, 480, 60, 60, 0x2d5016);
-    door.setStrokeStyle(4, 0xffe066, 1);
-    this.physics.add.existing(door, true);
-
-    this.dungeonExitGate = door;
-    this.addLog('던전 클리어! 출구 문이 열렸어요', 'gain');
-  }
-
-  handleDungeonExit() {
-    if (!this.dungeonExitGate) return;
-
-    const distance = Phaser.Math.Distance.Between(
-      this.player.x, this.player.y, this.dungeonExitGate.x, this.dungeonExitGate.y
+    const alive = this.entities.getChildren().filter(
+      e => e.encounterType === 'dungeon' && e.hp > 0 && !e.isDefeated
     );
+    this.dungeonWaveRemaining = alive.length;
 
-    if (distance < 80 && Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      this.exitDungeon();
+    if (alive.length === 0) {
+      this.spawnDungeonExitDoor();
+      return;
+    }
+
+    if (alive.length !== this.lastDungeonRemainingShown && this.currentDungeonGate) {
+      this.lastDungeonRemainingShown = alive.length;
+      const rankInfo = DUNGEON_RANKS[this.currentDungeonGate.rank];
+      this.buildingNameText.setText(`${rankInfo.name} · 남은 몬스터 ${alive.length}마리`);
     }
   }
 
-  exitDungeon() {
-    this.isInsideDungeon = false;
-    this.setOutdoorObjectsActive(true);
+  spawnDungeonExitDoor() {
+    if (this.dungeonExitGate) return;
+
+    const doorX = 400;
+    const doorY = 480;
+
+    const door = this.add.rectangle(doorX, doorY, 60, 60, 0x2d5016);
+    door.setStrokeStyle(4, 0xffe066, 1);
+    this.physics.add.existing(door, true);
+    this.dungeonExitGate = door;
+
+    // 문 뒤에서 은은하게 커졌다 작아지는 빛과, 문 위의 안내 글자예요
+    const glow = this.add.circle(doorX, doorY, 50, 0xffe066, 0.3);
+    glow.setDepth(-0.5);
+    const doorLabel = this.add.text(doorX, doorY - 55, '🚪 출구 (E키)', {
+      fontSize: '14px', color: '#ffe066', backgroundColor: '#000000aa', padding: { x: 6, y: 3 }
+    });
+    doorLabel.setOrigin(0.5);
+
+    this.dungeonExitObjects = [glow, doorLabel];
+    this.dungeonExitTween = this.tweens.add({
+      targets: glow, scale: 1.5, alpha: 0.05, duration: 700, yoyo: true, repeat: -1
+    });
+
+    // 클리어 연출: 화면 번쩍임 + 문 주변 파티클 + 퍼져나가는 링
+    this.cameras.main.flash(500, 255, 255, 200);
+    this.createParticleBurst(doorX, doorY, 0xffe066, 24);
+    this.createSkillUnlockEffect(doorX, doorY);
+
+    // 화면 가운데에 큰 안내 문구를 잠깐 보여주고 서서히 사라지게 해요
+    const banner = this.add.text(400, 230, '🎉 던전 클리어!\n출구 문 근처에서 E키를 누르면 나갈 수 있어요\n(어디서든 H키로도 나갈 수 있어요)', {
+      fontSize: '22px', color: '#ffe066', backgroundColor: '#000000cc',
+      padding: { x: 18, y: 12 }, align: 'center'
+    });
+    banner.setOrigin(0.5);
+    banner.setScrollFactor(0);
+    banner.setDepth(1001);
+    this.tweens.add({
+      targets: banner, alpha: 0, delay: 4500, duration: 800,
+      onComplete: () => banner.destroy()
+    });
+
+    // 화면 위쪽 상시 안내 문구는 남겨둬서, 배너가 사라진 뒤에도 나가는 방법을 알 수 있게 해요
+    if (this.currentDungeonGate) {
+      const rankInfo = DUNGEON_RANKS[this.currentDungeonGate.rank];
+      this.buildingNameText.setText(`${rankInfo.name} 클리어! 출구 문에서 E키 / 어디서든 H키로 나가기`);
+      this.buildingNameText.setVisible(true);
+    }
+
+    this.addLog('던전 클리어! 출구 문이 열렸어요 (E키 또는 H키로 나가기)', 'gain');
+  }
+
+  handleDungeonExit() {
+    this.checkDungeonCleared();
+    if (!this.dungeonExitGate) return;
+
+    const pressedE = Phaser.Input.Keyboard.JustDown(this.eKey);
+    const pressedH = Phaser.Input.Keyboard.JustDown(this.hKey);
+
+    // H키는 문까지 못 가는 상황을 대비한 비상 탈출이에요 (클리어한 뒤에만 동작해요)
+    if (pressedH) {
+      this.exitDungeon();
+      return;
+    }
+
+    if (pressedE) {
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x, this.player.y, this.dungeonExitGate.x, this.dungeonExitGate.y
+      );
+      if (distance < 80) {
+        this.exitDungeon();
+      } else {
+        this.addLog('출구 문 가까이에서 E키를 눌러주세요', 'info');
+      }
+    }
+  }
+
+  cleanupDungeonExitObjects() {
+    if (this.dungeonExitTween) {
+      this.dungeonExitTween.stop();
+      this.dungeonExitTween = null;
+    }
+    this.dungeonExitObjects.forEach(obj => obj.destroy());
+    this.dungeonExitObjects = [];
 
     if (this.dungeonExitGate) {
       this.dungeonExitGate.destroy();
       this.dungeonExitGate = null;
     }
+  }
+
+  exitDungeon() {
+    // 나가는 연출: 지금 서 있는 자리에서 파티클 + 화면 번쩍임
+    this.createParticleBurst(this.player.x, this.player.y, 0xffffff, 20);
+    this.cameras.main.flash(400, 255, 255, 255);
+
+    this.isInsideDungeon = false;
+    this.setOutdoorObjectsActive(true);
+
+    this.cleanupDungeonExitObjects();
 
     if (this.currentDungeonGate) {
       this.player.x = this.currentDungeonGate.x;
       this.player.y = this.currentDungeonGate.y + 80;
     }
     this.currentDungeonGate = null;
+    this.lastDungeonRemainingShown = -1;
 
     this.buildingNameText.setVisible(false);
     this.addLog('던전에서 나왔어요', 'info');

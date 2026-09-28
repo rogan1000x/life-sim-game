@@ -305,6 +305,60 @@ function App() {
           );
         })()}
 
+        {/* 소모품 단축키 바예요. 키보드 1~9, 0(=10번)으로 쓰거나 칸을 직접 클릭해도 돼요.
+            등록은 'I' 키 캐릭터 패널의 인벤토리에서 소모품 옆 선택창으로 해요. */}
+        <div style={{
+          position: 'absolute',
+          bottom: '10px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          gap: '3px',
+          zIndex: 500,
+          fontFamily: 'monospace'
+        }}>
+          {Array.from({ length: 10 }, (_, i) => {
+            const itemId = (playerStats.hotbar || [])[i];
+            const item = itemId ? SHOP_ITEMS.find(x => x.id === itemId) : null;
+            const count = itemId ? (playerStats.inventory?.[itemId] || 0) : 0;
+            const hasItem = !!item && count > 0;
+            const icon = !item ? '' : item.id.startsWith('potion') ? '🧪' : item.id.startsWith('food') ? '🍞' : '🎁';
+
+            return (
+              <div
+                key={i}
+                onClick={() => sceneRef.current && sceneRef.current.useHotbarSlot(i)}
+                title={item ? `${item.name} (${getEffectLabel(item)})` : `단축키 ${(i + 1) % 10}번 (비어있음)`}
+                style={{
+                  position: 'relative',
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '5px',
+                  border: `2px solid ${hasItem ? THEME.gold : '#666'}`,
+                  backgroundColor: hasItem ? 'rgba(255,215,106,0.2)' : 'rgba(0,0,0,0.55)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '16px',
+                  cursor: item ? 'pointer' : 'default',
+                  opacity: item && !hasItem ? 0.5 : 1,
+                  userSelect: 'none'
+                }}
+              >
+                <span style={{ position: 'absolute', top: '0px', left: '3px', fontSize: '9px', color: '#fff' }}>
+                  {(i + 1) % 10}
+                </span>
+                {icon}
+                {item && (
+                  <span style={{ position: 'absolute', bottom: '0px', right: '3px', fontSize: '10px', color: hasItem ? '#fff' : THEME.red }}>
+                    {count}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         <div style={{
           position: 'absolute',
           bottom: '10px',
@@ -533,13 +587,36 @@ function App() {
                     {isEquipped && ` (장착 중, 내구도 ${playerStats.equipmentDurability?.[key] ?? 0}/${shopItem.maxDurability})`}
                   </span>
                   {shopItem && shopItem.category === 'consumable' && (
-                    <button
-                      onClick={(e) => sceneRef.current.useItem(key, e.shiftKey ? 10 : 1)}
-                      style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
-                      title="Shift+클릭: 10개 사용"
-                    >
-                      사용
-                    </button>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      <select
+                        value={(playerStats.hotbar || []).indexOf(key)}
+                        onChange={(e) => {
+                          const slotIndex = Number(e.target.value);
+                          if (slotIndex < 0) {
+                            const current = (playerStats.hotbar || []).indexOf(key);
+                            if (current >= 0) sceneRef.current.clearHotbarSlot(current);
+                          } else {
+                            sceneRef.current.setHotbarSlot(slotIndex, key);
+                          }
+                          // 선택창이 포커스를 잡고 있으면 숫자 단축키가 막히니, 고르자마자 포커스를 풀어줘요
+                          e.target.blur();
+                        }}
+                        title="단축키 등록"
+                        style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: '#5a3d22', color: THEME.text, border: `1px solid ${THEME.borderColor}`, borderRadius: '4px', padding: '3px' }}
+                      >
+                        <option value={-1}>⌨ 없음</option>
+                        {Array.from({ length: 10 }, (_, i) => (
+                          <option key={i} value={i}>⌨ {(i + 1) % 10}번</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={(e) => sceneRef.current.useItem(key, e.shiftKey ? 10 : 1)}
+                        style={{ ...buttonStyle, fontSize: '11px', padding: '4px 8px' }}
+                        title="Shift+클릭: 10개 사용"
+                      >
+                        사용
+                      </button>
+                    </div>
                   )}
                   {shopItem && shopItem.category === 'equipment' && (
                     <div style={{ display: 'flex', gap: '4px' }}>
@@ -606,7 +683,9 @@ function App() {
             <div>H : 집·주점 출입</div>
             <div>F : 밭 구매·심기·수확</div>
             <div>Q : 액티브 스킬 발동</div>
+            <div>1~9, 0 : 소모품 단축키 (I키 인벤토리에서 등록)</div>
             <div>G : 사냥터·던전 게이트 입장</div>
+            <div>H : 필드·던전(클리어 후)에서 나가기</div>
             <div>I : 캐릭터 정보 패널</div>
             <div>P : Admin 패널 (개발용)</div>
             <div>ESC : 이 메뉴 열기/닫기</div>
