@@ -1667,6 +1667,10 @@ export class GameScene extends Phaser.Scene {
     this.dismissAlly('mercenary', '동료');
   }
 
+  dismissSpirit() {
+    this.dismissAlly('spirit', '정령');
+  }
+
   dismissAlly(slot, fallbackName = '동료') {
     const ally = this.allies[slot];
     if (!ally.id) return;

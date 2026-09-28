@@ -965,6 +965,37 @@ function App() {
                 })
               )}
 
+              {/* 소환사의 정령이에요. 용병(hiredCompanionId)과는 완전히 별개 슬롯이라, 용병이
+                  있든 없든 상관없이 따로 표시해요. 정령은 골드로 고용하는 게 아니라 소환사가
+                  Q키를 쓰거나(무료 소환) 몬스터 처치 시 10% 확률로 테이밍해서 얻기 때문에,
+                  여기엔 "고용" 버튼 없이 현재 상태 확인 + 놓아주기 버튼만 둬요. */}
+              <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
+                👻 정령
+              </h4>
+
+              {playerStats.spiritCompanionId ? (
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>
+                      현재 정령: {COMPANION_TYPES[playerStats.spiritCompanionId]?.name}
+                      ({COMPANION_TYPES[playerStats.spiritCompanionId]?.personality})
+                    </span>
+                    <button onClick={() => sceneRef.current.dismissSpirit()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                      놓아주기
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
+                    Lv.{playerStats.spiritLevel || 1} (EXP {playerStats.spiritExp || 0})
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontSize: '12px', color: '#a8927a', marginBottom: '16px' }}>
+                  {playerStats.playerClass === 'summoner'
+                    ? '아직 소환한 정령이 없어요. 전투 중 Q키로 무료 소환할 수 있어요.'
+                    : '정령은 소환사 전용이에요.'}
+                </p>
+              )}
+
               <h4 style={{ margin: '18px 0 10px', color: THEME.gold, borderBottom: `2px solid ${THEME.borderColor}`, paddingBottom: '6px' }}>
                 📋 퀘스트 게시판
               </h4>
