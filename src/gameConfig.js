@@ -282,22 +282,22 @@ export const FIELD_ZONES = {
   north: {
     name: '북쪽 숲 필드', color: 0x2d6b2d,
     entrance: { x: 400, y: 30 },
-    monsters: [{ type: 'wolf', count: 5 }, { type: 'goblin', count: 2 }, { type: 'skeleton', count: 3 }]
+    monsters: [{ type: 'wolf', count: 8 }, { type: 'goblin', count: 4 }, { type: 'skeleton', count: 5 }] // 필드가 넓어진 만큼 마리 수도 늘림
   },
   south: {
     name: '남쪽 평야 필드', color: 0x8b9a4a,
     entrance: { x: 400, y: 570 },
-    monsters: [{ type: 'goblin', count: 6 }]
+    monsters: [{ type: 'goblin', count: 10 }] // 필드가 넓어진 만큼 마리 수도 늘림
   },
   east: {
     name: '동쪽 산악 필드', color: 0x7a6a5a,
     entrance: { x: 770, y: 300 },
-    monsters: [{ type: 'bandit', count: 4 }, { type: 'wolf', count: 2 }]
+    monsters: [{ type: 'bandit', count: 6 }, { type: 'wolf', count: 4 }] // 필드가 넓어진 만큼 마리 수도 늘림
   },
   west: {
     name: '서쪽 해안 필드', color: 0x3a7a8a,
     entrance: { x: 30, y: 300 },
-    monsters: [{ type: 'goblin', count: 3 }, { type: 'bandit', count: 2 }]
+    monsters: [{ type: 'goblin', count: 5 }, { type: 'bandit', count: 3 }] // 필드가 넓어진 만큼 마리 수도 늘림
   }
 };
 

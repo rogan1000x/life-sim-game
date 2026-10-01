@@ -3,7 +3,7 @@ import {
   GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency,
   CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES,
   CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, HUNTING_GROUND_RANKS, HUNTING_GROUNDS,
-  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES, BOND_CONFIG, CLASS_AOE_SKILLS
+  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES, BOND_CONFIG, CLASS_AOE_SKILLS, VILLAGE_EXTENSIONS
 } from './gameConfig';
 
 // 고용할 수 있는 용병(동료) 슬롯 목록이에요. 슬롯 개수가 곧 "최대 동행 인원"이라서,
@@ -20,6 +20,14 @@ const ALLY_SHARED_EXP_RATIO = 1.0;
 // attackAngleDeg: 같은 몬스터를 공격할 때 몬스터를 중심으로 어느 방향에서 접근할지 (서로 겹치지 않게 분산).
 // idlePhase: 대기 중 미세하게 흔들리는 움직임의 위상 (유닛마다 다른 타이밍에 흔들리게).
 // speedMod: 이동속도 배율 (0.85~1.15 사이, 유닛별로 조금씩 빠르거나 느리게).
+// 동서남북 필드는 마을과 달리 건물/NPC 배치를 신경 쓸 필요가 없는 "완전히 비어있는 전투 공간"이라,
+// 여기서는 배치 재정리 대신 공간 자체를 키우고 카메라가 플레이어를 따라다니게(스크롤) 했어요.
+// 마을은 건물 좌표가 복잡하게 얽혀있어서 스크롤을 안 썼지만, 필드는 몬스터만 있어서 훨씬 간단해요.
+const FIELD_WORLD_WIDTH = 1600;
+const FIELD_WORLD_HEIGHT = 1200;
+// 마을(과 다른 실내/사냥터/던전 공간)에서 쓰는 원래 월드 경계예요. 필드에서 나갈 때 이 값으로 복원해요.
+const VILLAGE_WORLD_BOUNDS = { x: -50, y: -50, width: 900, height: 700 };
+
 const ALLY_PERSONALITY = {
   mercenary_0: { attackAngleDeg: 0, idlePhase: 0, speedMod: 1.08 },
   mercenary_1: { attackAngleDeg: 130, idlePhase: 2.1, speedMod: 0.92 },
@@ -111,6 +119,12 @@ export class GameScene extends Phaser.Scene {
     this.nearbyFieldZone = null;
     this.isInsideField = false;
     this.currentFieldZone = null;
+
+    // 마을 외곽 텃밭 - 밭(FARM_PLOTS)을 전부 여기로 옮겨서, 좁던 마을 중심부에 여유를 줬어요.
+    // 던전/필드처럼 완전히 독립된 공간이고, 전투는 없고 밭 작업만 하는 공간이에요.
+    this.outskirtsGateObject = null;
+    this.nearbyOutskirts = false;
+    this.isInsideOutskirts = false;
 
     // 용병(동료)은 여러 명(MERCENARY_SLOTS 개수만큼), 소환사의 정령은 별도 1칸으로 관리해요.
     // 전부 같은 모양의 상태 객체를 슬롯 이름(mercenary_0, mercenary_1, ..., spirit)으로 들고 있어서,
@@ -235,7 +249,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   create() {
-    this.physics.world.setBounds(-50, -50, 900, 700);
+    this.physics.world.setBounds(
+      VILLAGE_WORLD_BOUNDS.x, VILLAGE_WORLD_BOUNDS.y, VILLAGE_WORLD_BOUNDS.width, VILLAGE_WORLD_BOUNDS.height
+    );
 
     SHOP_ITEMS.forEach(item => {
       this.marketStock[item.id] = 10;
@@ -402,10 +418,12 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.npcs = this.add.group();
+    // 마을이 좁아 보인다는 피드백으로 재배치했어요. 밭을 "마을 외곽 텃밭"으로 전부 옮기면서
+    // 생긴 중앙 공간을 활용해 건물/NPC/게이트 사이 간격을 전체적으로 넓혔어요.
     const npcPositions = [
-      { x: 400, y: 150, type: 'villager1' },
-      { x: 250, y: 500, type: 'villager2' },
-      { x: 600, y: 500, type: 'villager3' }
+      { x: 400, y: 170, type: 'villager1' },
+      { x: 220, y: 330, type: 'villager2' },
+      { x: 580, y: 330, type: 'villager3' }
     ];
     npcPositions.forEach(pos => {
       this.npcs.add(this.createNpc(pos.x, pos.y, pos.type));
@@ -414,12 +432,12 @@ export class GameScene extends Phaser.Scene {
 
     this.houses = this.add.group();
     const housePositions = [
-      { x: 650, y: 450, type: 'myHouse' },
-      { x: 700, y: 150, type: 'house2' },
-      { x: 100, y: 500, type: 'house3' },
-      { x: 50, y: 50, type: 'house4' }
+      { x: 710, y: 510, type: 'myHouse' },
+      { x: 710, y: 90, type: 'house2' },
+      { x: 90, y: 510, type: 'house3' },
+      { x: 90, y: 90, type: 'house4' }
     ];
-    housePositions.push({ x: 780, y: 550, type: 'tavern' });
+    housePositions.push({ x: 560, y: 540, type: 'tavern' });
 
     housePositions.forEach(pos => {
       this.houses.add(this.createHouse(pos.x, pos.y, pos.type));
@@ -487,6 +505,21 @@ export class GameScene extends Phaser.Scene {
       this.fieldGateObjects[zoneId] = { gateSprite: entrance, label };
     });
 
+    // 마을 외곽 텃밭 입구예요. 밭들을 여기로 옮겨서 마을 중심부를 넓게 쓸 수 있게 했어요.
+    const outskirtsZone = VILLAGE_EXTENSIONS.outskirts_farm;
+    const outskirtsEntrance = this.add.circle(outskirtsZone.entrance.x, outskirtsZone.entrance.y, 22, outskirtsZone.color);
+    outskirtsEntrance.setStrokeStyle(3, 0xffffff, 0.9);
+
+    const outskirtsLabel = this.add.text(outskirtsZone.entrance.x, outskirtsZone.entrance.y - 32, outskirtsZone.name, {
+      fontSize: '12px', color: '#ffffff', backgroundColor: '#00000088', padding: { x: 4, y: 2 }
+    });
+    outskirtsLabel.setOrigin(0.5);
+
+    this.physics.add.existing(outskirtsEntrance, true);
+    this.physics.add.collider(this.player, outskirtsEntrance);
+
+    this.outskirtsGateObject = { gateSprite: outskirtsEntrance, label: outskirtsLabel };
+
     // 용병/정령 머리 위에 HP바를 그려줄 Graphics 하나예요. 매 프레임 clear() 후 다시 그리는 방식이라
     // 유닛마다 오브젝트를 만들고 지울 필요가 없어서(=유령 오브젝트 걱정이 없어서) 가장 안전해요.
     this.allyHpBarGraphics = this.add.graphics();
@@ -494,6 +527,10 @@ export class GameScene extends Phaser.Scene {
     this.allyLevelTexts = {}; // 슬롯별 레벨 표시 Text를 재사용하기 위한 캐시예요 (매 프레임 새로 만들지 않음)
 
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, { fontSize: '20px', color: '#ff4444' });
+    // 필드에서 카메라가 플레이어를 따라 스크롤하기 때문에, 화면 고정 UI는 명시적으로
+    // scrollFactor(0)을 줘야 해요. 이게 빠져있으면 카메라가 움직일 때 HP 글씨도 같이 흘러가요.
+    this.hpText.setScrollFactor(0);
+    this.hpText.setDepth(1000);
 
     this.buildingNameText = this.add.text(400, 20, '', {
       fontSize: '22px', color: '#ffd76a', backgroundColor: '#00000099', padding: { x: 12, y: 6 }
@@ -689,7 +726,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    if (!this.isInsideDungeon && !this.isInsideField) {
+    if (!this.isInsideDungeon && !this.isInsideField && !this.isInsideOutskirts) {
       this.nearbyNpc = null;
       this.npcs.getChildren().forEach(npc => {
         const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y);
@@ -725,16 +762,6 @@ export class GameScene extends Phaser.Scene {
         this.toggleHouse();
       }
 
-      this.nearbyFarmPlot = null;
-      FARM_PLOTS.forEach(plot => {
-        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, plot.x, plot.y);
-        if (distance < 80) this.nearbyFarmPlot = plot;
-      });
-
-      if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
-        this.handleFarmInteract(this.nearbyFarmPlot.id);
-      }
-
       this.nearbyGate = null;
       HUNTING_GROUNDS.forEach(gateConfig => {
         const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, gateConfig.x, gateConfig.y);
@@ -754,12 +781,20 @@ export class GameScene extends Phaser.Scene {
         if (distance < 90) this.nearbyFieldZone = zoneId;
       });
 
+      const outskirtsZone = VILLAGE_EXTENSIONS.outskirts_farm;
+      this.nearbyOutskirts = Phaser.Math.Distance.Between(
+        this.player.x, this.player.y, outskirtsZone.entrance.x, outskirtsZone.entrance.y
+      ) < 90;
+
       if (this.nearbyDungeonGate) {
         const rankInfo = DUNGEON_RANKS[this.nearbyDungeonGate.rank];
         this.buildingNameText.setText(`${rankInfo.name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
       } else if (this.nearbyFieldZone) {
         this.buildingNameText.setText(`${FIELD_ZONES[this.nearbyFieldZone].name} 입구 (G키로 입장)`);
+        this.buildingNameText.setVisible(true);
+      } else if (this.nearbyOutskirts) {
+        this.buildingNameText.setText(`${outskirtsZone.name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
       } else if (this.nearbyGate) {
         const rankInfo = HUNTING_GROUND_RANKS[this.nearbyGate.rank];
@@ -774,6 +809,8 @@ export class GameScene extends Phaser.Scene {
           this.enterDungeon(this.nearbyDungeonGate);
         } else if (this.nearbyFieldZone) {
           this.enterField(this.nearbyFieldZone);
+        } else if (this.nearbyOutskirts) {
+          this.enterOutskirts();
         } else if (this.nearbyGate) {
           this.enterHuntingGround(this.nearbyGate.id);
         }
@@ -783,6 +820,20 @@ export class GameScene extends Phaser.Scene {
     } else if (this.isInsideField) {
       if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
         this.exitField();
+      }
+    } else if (this.isInsideOutskirts) {
+      this.nearbyFarmPlot = null;
+      FARM_PLOTS.forEach(plot => {
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, plot.x, plot.y);
+        if (distance < 80) this.nearbyFarmPlot = plot;
+      });
+
+      if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
+        this.handleFarmInteract(this.nearbyFarmPlot.id);
+      }
+
+      if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
+        this.exitOutskirts();
       }
     }
   }
@@ -1007,7 +1058,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   isIndoors() {
-    return this.isInsideHouse || this.isInsideDungeon || this.isInsideField;
+    return this.isInsideHouse || this.isInsideDungeon || this.isInsideField || this.isInsideOutskirts;
   }
 
   setOutdoorObjectsActive(isActive) {
@@ -1031,6 +1082,12 @@ export class GameScene extends Phaser.Scene {
         label.setVisible(isActive);
       });
     });
+
+    if (this.outskirtsGateObject) {
+      this.outskirtsGateObject.gateSprite.setVisible(isActive);
+      this.outskirtsGateObject.gateSprite.body.enable = isActive;
+      this.outskirtsGateObject.label.setVisible(isActive);
+    }
   }
 
   createFarmPlot(plotConfig) {
@@ -1047,11 +1104,14 @@ export class GameScene extends Phaser.Scene {
     this.refreshFarmPlotVisual(plotConfig.id);
   }
 
+  // 밭은 이제 마을 외곽 텃밭(isInsideOutskirts)에서만 보여요. 마을/집/던전/필드 등 그 외의
+  // 어떤 공간에 있든(과거엔 isIndoors()만 체크했음) 전부 숨겨야, 좌표가 겹쳐도 안 보이고
+  // F키로도 상호작용이 안 돼요 (F키 체크 자체도 update()에서 isInsideOutskirts일 때만 돌아가요).
   refreshFarmPlotVisual(plotId) {
     const farmObj = this.farmPlots[plotId];
     if (!farmObj) return;
 
-    if (this.isIndoors()) {
+    if (!this.isInsideOutskirts) {
       farmObj.plotSprite.setVisible(false);
       farmObj.priceLabel.setVisible(false);
       if (farmObj.cropSprite) farmObj.cropSprite.setVisible(false);
@@ -2977,8 +3037,15 @@ export class GameScene extends Phaser.Scene {
     this.currentFieldZone = zoneId;
     this.setOutdoorObjectsActive(false);
 
-    this.player.x = 400;
-    this.player.y = 300;
+    // 필드는 마을(800x600)보다 훨씬 넓은 공간(FIELD_WORLD_WIDTH x FIELD_WORLD_HEIGHT)이에요.
+    // 물리 경계를 넓히고, 카메라가 플레이어를 부드럽게 따라다니게 해서 실제로 넓은 땅을
+    // 돌아다니는 느낌을 줘요. 나갈 때(exitField)는 이걸 전부 마을 설정으로 되돌려요.
+    this.physics.world.setBounds(0, 0, FIELD_WORLD_WIDTH, FIELD_WORLD_HEIGHT);
+    this.cameras.main.setBounds(0, 0, FIELD_WORLD_WIDTH, FIELD_WORLD_HEIGHT);
+    this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
+
+    this.player.x = FIELD_WORLD_WIDTH / 2;
+    this.player.y = FIELD_WORLD_HEIGHT / 2;
 
     this.cameras.main.setBackgroundColor(Phaser.Display.Color.IntegerToColor(zone.color).rgba);
 
@@ -2988,10 +3055,11 @@ export class GameScene extends Phaser.Scene {
     // 별도 그룹 없이 기존 entities 그룹 하나에만 등록하고, "꼬리표(fieldZoneId)"로
     // 어느 필드 소속인지 구분해요. 이렇게 하면 그룹을 여러 개 관리하며 생기는
     // 물리 엔진 꼬임 없이, entities.remove()만으로 안전하게 정리할 수 있어요.
+    // 넓어진 공간에 맞춰 몬스터도 가장자리 150px씩 여백을 두고 전체에 골고루 퍼뜨려요.
     zone.monsters.forEach(monsterConfig => {
       for (let i = 0; i < monsterConfig.count; i++) {
-        const spawnX = Phaser.Math.Between(100, 700);
-        const spawnY = Phaser.Math.Between(100, 500);
+        const spawnX = Phaser.Math.Between(150, FIELD_WORLD_WIDTH - 150);
+        const spawnY = Phaser.Math.Between(150, FIELD_WORLD_HEIGHT - 150);
 
         const monster = this.createEntity(spawnX, spawnY, monsterConfig.type);
         monster.encounterType = 'field';
@@ -3000,7 +3068,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    this.addLog(`${zone.name}에 입장했어요`, 'info');
+    this.addLog(`${zone.name}에 입장했어요 (예전보다 훨씬 넓어요!)`, 'info');
   }
 
   // 필드에서 나갈 때 호출돼요. 언제든(H키) 자유롭게 나갈 수 있음
@@ -3016,6 +3084,15 @@ export class GameScene extends Phaser.Scene {
     this.setOutdoorObjectsActive(true);
     this.cameras.main.setBackgroundColor('#4a7c3c');
 
+    // 카메라 추적을 멈추고, 물리 경계와 카메라 경계를 전부 마을 기준으로 되돌려요.
+    // 이걸 안 하면 마을로 돌아와서도 카메라가 계속 플레이어를 따라다니려고 해요.
+    this.cameras.main.stopFollow();
+    this.cameras.main.setScroll(0, 0);
+    this.cameras.main.setBounds(0, 0, 800, 600);
+    this.physics.world.setBounds(
+      VILLAGE_WORLD_BOUNDS.x, VILLAGE_WORLD_BOUNDS.y, VILLAGE_WORLD_BOUNDS.width, VILLAGE_WORLD_BOUNDS.height
+    );
+
     const zone = FIELD_ZONES[this.currentFieldZone];
     if (zone) {
       this.player.x = zone.entrance.x;
@@ -3025,6 +3102,42 @@ export class GameScene extends Phaser.Scene {
 
     this.buildingNameText.setVisible(false);
     this.addLog('필드에서 나왔어요', 'info');
+  }
+
+  // 마을 외곽 텃밭에 들어갈 때 호출돼요. 던전/필드와 같은 패턴(완전히 별도 공간)이지만,
+  // 몬스터가 없고 밭 작업만 하는 평화로운 공간이라는 점이 달라요.
+  enterOutskirts() {
+    if (this.isInsideOutskirts) return;
+
+    this.isInsideOutskirts = true;
+    this.setOutdoorObjectsActive(false);
+
+    this.player.x = 400;
+    this.player.y = 520; // 밭들이 위쪽에 모여있어서, 입구 근처인 아래쪽에서 시작해요
+
+    this.cameras.main.setBackgroundColor(Phaser.Display.Color.IntegerToColor(VILLAGE_EXTENSIONS.outskirts_farm.color).rgba);
+
+    this.buildingNameText.setText(`${VILLAGE_EXTENSIONS.outskirts_farm.name} (H키로 나가기)`);
+    this.buildingNameText.setVisible(true);
+
+    FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
+
+    this.addLog(`${VILLAGE_EXTENSIONS.outskirts_farm.name}에 들어왔어요`, 'info');
+  }
+
+  exitOutskirts() {
+    this.isInsideOutskirts = false;
+    this.setOutdoorObjectsActive(true);
+    this.cameras.main.setBackgroundColor('#4a7c3c');
+
+    FARM_PLOTS.forEach(plot => this.refreshFarmPlotVisual(plot.id));
+
+    const outskirtsZone = VILLAGE_EXTENSIONS.outskirts_farm;
+    this.player.x = outskirtsZone.entrance.x;
+    this.player.y = outskirtsZone.entrance.y + 80;
+
+    this.buildingNameText.setVisible(false);
+    this.addLog('마을 외곽에서 돌아왔어요', 'info');
   }
 
   createParticleBurst(x, y, color, count = 8) {
