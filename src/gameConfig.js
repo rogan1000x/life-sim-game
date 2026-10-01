@@ -554,13 +554,26 @@ export const QUEST_TEMPLATES = [
 // trait는 각자의 개성 있는 특성이에요. type에 따라 GameScene에서 다르게 적용돼요:
 // 'critBonus' - 가끔(value%) 추가 피해가 터짐 / 'damageReduction' - 받는 피해를 value%만큼 줄임
 // 'expBonus' - 얻는 경험치를 value배로 늘림 (성장이 빨라짐)
+//
+// bondDialogues: 유대감(Bond) 레벨이 특정 단계에 도달하면 "대화하기"에서 나오는 특별 대사예요.
+// 키는 유대 레벨이고, 그 레벨에 처음 도달하는 순간부터 그 이하의 다른 대사보다 우선해서 보여줘요.
+// 정해진 단계에 아직 도달 못 했으면 talkLines(평범한 인사말)에서 무작위로 하나 골라 보여줘요.
 export const COMPANION_TYPES = {
   roy: {
     name: '로이', personality: '성실한 여행자',
     spriteKey: 'npc_villager3', tintColor: 0xffffff, // 원래 색 그대로 (기준점 역할)
     hireCost: 5000, attackBonus: 4, maxHp: 80,
     hireLine: '로이가 씩씩하게 인사해요: "잘 부탁해요! 언제든 도울게요."',
-    description: '밸런스가 잘 잡힌 믿음직한 동료예요'
+    description: '밸런스가 잘 잡힌 믿음직한 동료예요',
+    talkLines: [
+      '오늘도 함께해줘서 고마워요.',
+      '뭐든 시켜만 주세요, 최선을 다할게요!'
+    ],
+    bondDialogues: {
+      3: '당신과 다니다 보니 저도 모르게 실력이 늘고 있어요.',
+      6: '솔직히... 처음보다 훨씬 편해졌어요. 당신 덕분이에요.',
+      10: '이제 당신 없인 못 싸울 것 같아요. 계속 함께해줘요!'
+    }
   },
   mira: {
     name: '미라', personality: '대담한 전직 용병',
@@ -568,7 +581,16 @@ export const COMPANION_TYPES = {
     hireCost: 8000, attackBonus: 7, maxHp: 60,
     trait: { type: 'critBonus', value: 20 }, // 20% 확률로 추가 피해
     hireLine: '미라가 씩 웃으며 말해요: "재밌겠는데? 같이 가보자."',
-    description: '공격적이지만 체력이 약해요. 가끔 강력한 일격을 날려요'
+    description: '공격적이지만 체력이 약해요. 가끔 강력한 일격을 날려요',
+    talkLines: [
+      '오늘은 또 뭐 재밌는 일 없어?',
+      '몸이 근질근질한데, 슬슬 나가볼까?'
+    ],
+    bondDialogues: {
+      3: '너 생각보다 배짱 있네. 마음에 들어.',
+      6: '너랑 싸우면 왠지 안 질 것 같단 말이지.',
+      10: '이제 진짜 동료로 인정할게. 등 맡길게, 믿는다.'
+    }
   },
   sein: {
     name: '세인', personality: '신중한 은둔 학자',
@@ -576,7 +598,16 @@ export const COMPANION_TYPES = {
     hireCost: 8000, attackBonus: 3, maxHp: 110,
     trait: { type: 'damageReduction', value: 25 }, // 받는 피해 25% 감소
     hireLine: '세인이 조용히 고개를 끄덕여요: "신중하게 움직이겠습니다."',
-    description: '체력이 높고 잘 버텨요. 받는 피해가 줄어들어요'
+    description: '체력이 높고 잘 버텨요. 받는 피해가 줄어들어요',
+    talkLines: [
+      '오늘 하루도 무사히 지나가길.',
+      '조금 쉬었다 가도 괜찮을 것 같습니다.'
+    ],
+    bondDialogues: {
+      3: '당신의 판단은... 신뢰할 만하군요.',
+      6: '이상하게 당신 곁이 편안합니다.',
+      10: '오래도록 곁에서 지켜드리고 싶습니다.'
+    }
   },
   pie: {
     name: '파이', personality: '쾌활한 방랑자',
@@ -584,7 +615,16 @@ export const COMPANION_TYPES = {
     hireCost: 6000, attackBonus: 5, maxHp: 75,
     trait: { type: 'expBonus', value: 1.5 }, // 경험치 1.5배
     hireLine: '파이가 신나서 폴짝 뛰어요: "우와, 드디어 모험이다!"',
-    description: '성장이 빨라요. 금방 강해지는 타입이에요'
+    description: '성장이 빨라요. 금방 강해지는 타입이에요',
+    talkLines: [
+      '다음엔 또 어디로 가요? 기대돼요!',
+      '헤헤, 오늘도 신난다!'
+    ],
+    bondDialogues: {
+      3: '당신이랑 다니면 하나도 안 지루해요!',
+      6: '이젠 당신 없인 모험이 재미없을 것 같아요.',
+      10: '우리 계속 이렇게 같이 다녀요, 약속!'
+    }
   },
 
   // 아래 둘은 소환사 전용 "정령"이에요. 골드로 고용하는 게 아니라 소환/테이밍으로만
@@ -595,13 +635,31 @@ export const COMPANION_TYPES = {
     name: '늑대 정령', personality: '소환된 정령',
     isSpiritSummon: true, color: 0x8899ff, radius: 20,
     hireCost: 0, attackBonus: 6, maxHp: 70,
-    description: '늑대의 모습을 한 정령이에요'
+    description: '늑대의 모습을 한 정령이에요',
+    talkLines: [
+      '(정령이 낮게 그르렁거리며 기뻐해요)',
+      '(정령의 눈빛이 부드러워져요)'
+    ],
+    bondDialogues: {
+      3: '(정령이 당신 곁에 바짝 붙어 걸어요)',
+      6: '(정령의 몸에서 은은한 빛이 돌기 시작해요)',
+      10: '(정령이 당신을 향해 깊이 고개를 숙여요. 완전한 신뢰의 표시예요)'
+    }
   },
   spirit_goblin: {
     name: '고블린 정령', personality: '소환된 정령',
     isSpiritSummon: true, color: 0x66cc66, radius: 16,
     hireCost: 0, attackBonus: 4, maxHp: 55,
-    description: '고블린의 모습을 한 정령이에요'
+    description: '고블린의 모습을 한 정령이에요',
+    talkLines: [
+      '(정령이 폴짝폴짝 뛰며 반가워해요)',
+      '(정령이 신난 듯 주위를 맴돌아요)'
+    ],
+    bondDialogues: {
+      3: '(정령이 당신 손짓 하나에도 민첩하게 반응해요)',
+      6: '(정령의 색이 한층 선명해졌어요)',
+      10: '(정령이 당신 앞을 막아서며 지키려는 듯 서 있어요)'
+    }
   }
 };
 
@@ -743,4 +801,14 @@ export const BUILDING_TYPES = {
       { spriteKey: 'furn_dresser1', x: 450, y: 200, scale: 4 }
     ]
   }
+};
+
+// 동료/정령의 유대감(Bond) 시스템 설정이에요. 전투 레벨(level/exp)과는 완전히 별개의 성장 축으로,
+// "함께 싸운 경험"과 "대화"로만 올라가요. GameScene의 gainBondExp()가 이 값들을 참조해요.
+export const BOND_CONFIG = {
+  expPerLevel: 30,       // 유대 레벨당 필요 경험치 = bondLevel * expPerLevel
+  combatGain: 2,         // 동료가 스스로 공격/자동스킬을 쓸 때마다 얻는 유대 경험치
+  talkGain: 15,          // "대화하기"로 얻는 유대 경험치 (하루 1회 제한)
+  maxLevel: 10,          // 이 레벨에 처음 도달하면 특별 연출(불꽃놀이 + 대사)이 한 번 재생돼요
+  statBonusPerLevel: 1   // 유대 레벨 1당 그 동료의 공격 보너스 + (모든 동료 합산) 플레이어 공격/방어력에 +1씩
 };
