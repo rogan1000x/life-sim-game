@@ -699,6 +699,43 @@ export const CLASS_ACTIVE_SKILLS = {
   }
 };
 
+// 직업별 "광역(다중 타겟)" 액티브 스킬이에요. R키로 발동하고, 위의 CLASS_ACTIVE_SKILLS(Q키)와는
+// 별개의 쿨타임을 가져요. 근접 계열(warrior/priest/summoner)은 플레이어 주변 radius 안의 몬스터를
+// 전부 때리고, 원거리 계열(archer/rogue)은 가까운 순으로 maxTargets마리까지 동시에 맞혀요.
+// 마법사는 화면 전체(range: Infinity)를 때리는 대신 쿨타임이 가장 길어요.
+export const CLASS_AOE_SKILLS = {
+  warrior: {
+    id: 'aoe_warrior_whirlwind', name: '회전 베기', key: 'R', cooldownMs: 10000,
+    radius: 110, damageMultiplier: 1.4,
+    description: '주변 몬스터 전부를 크게 베어버려요 (공격력 x1.4, 플레이어 주변 범위 공격)'
+  },
+  archer: {
+    id: 'aoe_archer_multishot', name: '다중 사격', key: 'R', cooldownMs: 9000,
+    range: 260, maxTargets: 3, damageMultiplier: 1.3,
+    description: '가까운 몬스터 최대 3마리에게 동시에 화살을 꽂아요 (공격력 x1.3)'
+  },
+  mage: {
+    id: 'aoe_mage_meteor', name: '메테오 샤워', key: 'R', cooldownMs: 15000,
+    range: Infinity, damageMultiplier: 1.6, useMagicPower: true,
+    description: '화면에 있는 몬스터 전부에게 운석비를 떨어뜨려요 (마력 x1.6, 쿨타임이 긴 대신 범위가 가장 넓음)'
+  },
+  priest: {
+    id: 'aoe_priest_judgment', name: '심판의 빛', key: 'R', cooldownMs: 11000,
+    radius: 130, damageMultiplier: 1.5, undeadMultiplier: 2.2, useMagicPower: true,
+    description: '주변 몬스터 전부에게 성스러운 빛을 내려요 (언데드는 피해 2.2배)'
+  },
+  rogue: {
+    id: 'aoe_rogue_shuriken', name: '표창 난사', key: 'R', cooldownMs: 8000,
+    range: 240, maxTargets: 3, damageMultiplier: 1.2,
+    description: '가까운 몬스터 최대 3마리에게 표창을 흩뿌려요 (공격력 x1.2)'
+  },
+  summoner: {
+    id: 'aoe_summoner_soulwave', name: '영혼 파동', key: 'R', cooldownMs: 12000,
+    radius: 140, damageMultiplier: 1.3,
+    description: '주변 몬스터 전부에게 영혼의 파동을 퍼뜨려요 (공격력 x1.3)'
+  }
+};
+
 // 사냥터 등급 정의예요. order는 등급 비교용 숫자(낮을수록 약함), color는 게이트 색깔,
 // monsterMultiplier는 이 등급에서 나오는 몬스터의 체력/공격력/속도를 몇 배로 강화할지,
 // bossHpMultiplier는 거기에 추가로 보스에게만 곱해지는 배율이에요.

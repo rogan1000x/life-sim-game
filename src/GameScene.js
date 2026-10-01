@@ -3,7 +3,7 @@ import {
   GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency,
   CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES,
   CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, HUNTING_GROUND_RANKS, HUNTING_GROUNDS,
-  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES, BOND_CONFIG
+  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES, BOND_CONFIG, CLASS_AOE_SKILLS
 } from './gameConfig';
 
 // 고용할 수 있는 용병(동료) 슬롯 목록이에요. 슬롯 개수가 곧 "최대 동행 인원"이라서,
@@ -119,6 +119,7 @@ export class GameScene extends Phaser.Scene {
     this.getAllySlots().forEach(slot => { this.allies[slot] = this.createEmptyAllyState(); });
 
     this.activeSkillCooldownEndTime = 0;
+    this.aoeSkillCooldownEndTime = 0; // R키 광역기 전용 쿨타임 (Q키와 완전히 별개)
 
     // 도적 은신 관련 상태예요.
     this.rogueAmbushReady = false; // true면 "다음 공격이 기습(무조건 치명타)"으로 처리됨
@@ -131,6 +132,7 @@ export class GameScene extends Phaser.Scene {
     this.onFarmMenuOpen = null;
     this.onTavernOpen = null;
     this.onCooldownUpdate = null;
+    this.onAoeCooldownUpdate = null;
 
     this.godMode = false;
 
@@ -365,6 +367,7 @@ export class GameScene extends Phaser.Scene {
     this.hKey = this.input.keyboard.addKey('H');
     this.fKey = this.input.keyboard.addKey('F');
     this.qKey = this.input.keyboard.addKey('Q');
+    this.rSkillKey = this.input.keyboard.addKey('R'); // 광역(다중 타겟) 스킬 전용 키
     this.gKey = this.input.keyboard.addKey('G');
 
     // 소모품 단축키 1~9, 0(=10번)이에요. addKey의 두 번째 값(false)은 "브라우저 기본 동작을 막지 않음"이라는
@@ -545,8 +548,14 @@ export class GameScene extends Phaser.Scene {
     const cooldownRemaining = Math.max(0, this.activeSkillCooldownEndTime - this.time.now);
     if (this.onCooldownUpdate) this.onCooldownUpdate(cooldownRemaining);
 
+    const aoeCooldownRemaining = Math.max(0, this.aoeSkillCooldownEndTime - this.time.now);
+    if (this.onAoeCooldownUpdate) this.onAoeCooldownUpdate(aoeCooldownRemaining);
+
     if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
       this.useActiveSkill();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.rSkillKey)) {
+      this.useAoeSkill();
     }
 
     this.entities.getChildren().forEach(entity => {
@@ -2576,6 +2585,72 @@ export class GameScene extends Phaser.Scene {
       const actualCooldown = skill.cooldownMs * (1 - this.cooldownReduction / 100);
       this.activeSkillCooldownEndTime = this.time.now + actualCooldown;
     }
+  }
+
+  // R키로 쓰는 직업별 광역(다중 타겟) 스킬이에요. Q키의 CLASS_ACTIVE_SKILLS와는 완전히 별개의
+  // 쿨타임을 쓰고, "여러 몬스터를 한 번에 때린다"는 공통점만 있고 방식은 두 갈래로 나뉘어요:
+  // - radius가 있으면: 플레이어 주변 반경 안의 몬스터 전부를 때림 (근접 계열)
+  // - maxTargets가 있으면: 가까운 순으로 최대 N마리를 동시에 때림 (원거리 계열)
+  useAoeSkill() {
+    if (!this.playerClass) return;
+
+    const skill = CLASS_AOE_SKILLS[this.playerClass];
+    if (!skill) return;
+
+    if (this.time.now < this.aoeSkillCooldownEndTime) {
+      const remainingSec = Math.ceil((this.aoeSkillCooldownEndTime - this.time.now) / 1000);
+      this.addLog(`아직 쿨타임이에요 (${remainingSec}초)`, 'info');
+      return;
+    }
+
+    const basePower = skill.useMagicPower ? this.magicPower : this.attackPower;
+    let hitCount = 0;
+
+    const strikeTarget = (entity) => {
+      const info = ENTITY_TYPES[entity.entityType];
+      let multiplier = skill.damageMultiplier;
+      if (skill.undeadMultiplier && info.isUndead) multiplier = skill.undeadMultiplier;
+
+      const damage = Math.round(basePower * multiplier);
+      entity.hp -= damage;
+      hitCount++;
+      this.createParticleBurst(entity.x, entity.y, 0xff6633, 10);
+
+      if (entity.hp <= 0) this.defeatMonster(entity, info);
+    };
+
+    if (skill.radius) {
+      // 플레이어를 중심으로 반경 안의 몬스터 전부를 때려요.
+      this.entities.getChildren().forEach(entity => {
+        if (!entity.active) return;
+        const info = ENTITY_TYPES[entity.entityType];
+        if (info.category !== 'hostile_monster') return;
+
+        const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, entity.x, entity.y);
+        if (distance <= skill.radius) strikeTarget(entity);
+      });
+    } else if (skill.maxTargets) {
+      // 사거리 안의 몬스터 중 가까운 순으로 최대 maxTargets마리를 골라서 때려요.
+      const candidates = this.entities.getChildren()
+        .filter(entity => entity.active && ENTITY_TYPES[entity.entityType].category === 'hostile_monster')
+        .map(entity => ({ entity, distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, entity.x, entity.y) }))
+        .filter(item => item.distance <= skill.range)
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, skill.maxTargets);
+
+      candidates.forEach(item => strikeTarget(item.entity));
+    }
+
+    if (hitCount === 0) {
+      this.addLog('주변에 맞출 몬스터가 없어요', 'info');
+      return; // 맞은 대상이 없으면 Q키 스킬들과 마찬가지로 쿨타임을 소모하지 않아요
+    }
+
+    this.createSkillUnlockEffect(this.player.x, this.player.y);
+    this.addLog(`${skill.name}! ${hitCount}마리 적중`, 'kill');
+
+    const actualCooldown = skill.cooldownMs * (1 - this.cooldownReduction / 100);
+    this.aoeSkillCooldownEndTime = this.time.now + actualCooldown;
   }
 
   defeatMonster(entity, info) {

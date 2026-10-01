@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { GameScene } from './GameScene';
-import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS } from './gameConfig';
+import { SHOP_ITEMS, ENTITY_TYPES, formatCurrency, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES, CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, CLASS_AOE_SKILLS } from './gameConfig';
 import Phaser from 'phaser';
 // recharts는 React에서 그래프/차트를 쉽게 그릴 수 있게 해주는 라이브러리예요.
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
@@ -99,6 +99,7 @@ function App() {
   const [showTavern, setShowTavern] = useState(false);
   const [graphItemId, setGraphItemId] = useState(null);
   const [skillCooldownMs, setSkillCooldownMs] = useState(0);
+  const [aoeCooldownMs, setAoeCooldownMs] = useState(0);
 
   // ESC 메뉴가 열려있는지 여부, 그리고 옵션 슬라이더들의 현재 값이에요
   const [showEscMenu, setShowEscMenu] = useState(false);
@@ -132,6 +133,7 @@ function App() {
     scene.onFarmMenuOpen = (plotId) => setFarmMenuPlotId(plotId);
     scene.onTavernOpen = (isOpen) => setShowTavern(isOpen);
     scene.onCooldownUpdate = (ms) => setSkillCooldownMs(ms);
+    scene.onAoeCooldownUpdate = (ms) => setAoeCooldownMs(ms);
 
     const config = {
       type: Phaser.AUTO,
@@ -275,35 +277,67 @@ function App() {
     }}>
       <div id="phaser-game" style={{ width: '800px', height: '600px', flexShrink: 0, position: 'relative' }}>
 
-        {playerStats.playerClass && CLASS_ACTIVE_SKILLS[playerStats.playerClass] && (() => {
-          const activeSkill = CLASS_ACTIVE_SKILLS[playerStats.playerClass];
-          const isReady = skillCooldownMs <= 0;
-          const remainingSec = Math.ceil(skillCooldownMs / 1000);
+        {/* Q(단일 타겟 스킬)와 R(광역/다중 타겟 스킬) 아이콘을 나란히 보여줘요. 둘은 쿨타임이
+            완전히 별개라서 한쪽이 쿨타임 중이어도 다른 쪽은 바로 쓸 수 있어요. */}
+        {playerStats.playerClass && (
+          <div style={{ position: 'absolute', bottom: '10px', right: '10px', zIndex: 500, fontFamily: 'monospace', display: 'flex', gap: '8px' }}>
+            {CLASS_ACTIVE_SKILLS[playerStats.playerClass] && (() => {
+              const activeSkill = CLASS_ACTIVE_SKILLS[playerStats.playerClass];
+              const isReady = skillCooldownMs <= 0;
+              const remainingSec = Math.ceil(skillCooldownMs / 1000);
 
-          return (
-            <div style={{ position: 'absolute', bottom: '10px', right: '10px', zIndex: 500, fontFamily: 'monospace' }}>
-              <div style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '8px',
-                border: `2px solid ${isReady ? THEME.gold : '#666'}`,
-                backgroundColor: isReady ? 'rgba(255,215,106,0.25)' : 'rgba(0,0,0,0.6)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'white'
-              }}>
-                <span style={{ fontSize: '11px', fontWeight: 'bold' }}>Q</span>
-                {isReady ? (
-                  <span style={{ fontSize: '10px' }}>{activeSkill.name}</span>
-                ) : (
-                  <span style={{ fontSize: '20px', color: '#aaa' }}>{remainingSec}</span>
-                )}
-              </div>
-            </div>
-          );
-        })()}
+              return (
+                <div style={{
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '8px',
+                  border: `2px solid ${isReady ? THEME.gold : '#666'}`,
+                  backgroundColor: isReady ? 'rgba(255,215,106,0.25)' : 'rgba(0,0,0,0.6)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'white'
+                }}>
+                  <span style={{ fontSize: '11px', fontWeight: 'bold' }}>Q</span>
+                  {isReady ? (
+                    <span style={{ fontSize: '10px' }}>{activeSkill.name}</span>
+                  ) : (
+                    <span style={{ fontSize: '20px', color: '#aaa' }}>{remainingSec}</span>
+                  )}
+                </div>
+              );
+            })()}
+
+            {CLASS_AOE_SKILLS[playerStats.playerClass] && (() => {
+              const aoeSkill = CLASS_AOE_SKILLS[playerStats.playerClass];
+              const isReady = aoeCooldownMs <= 0;
+              const remainingSec = Math.ceil(aoeCooldownMs / 1000);
+
+              return (
+                <div style={{
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '8px',
+                  border: `2px solid ${isReady ? THEME.blue : '#666'}`,
+                  backgroundColor: isReady ? 'rgba(126,200,227,0.25)' : 'rgba(0,0,0,0.6)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'white'
+                }}>
+                  <span style={{ fontSize: '11px', fontWeight: 'bold' }}>R</span>
+                  {isReady ? (
+                    <span style={{ fontSize: '10px' }}>{aoeSkill.name}</span>
+                  ) : (
+                    <span style={{ fontSize: '20px', color: '#aaa' }}>{remainingSec}</span>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* 소모품 단축키 바예요. 키보드 1~9, 0(=10번)으로 쓰거나 칸을 직접 클릭해도 돼요.
             등록은 'I' 키 캐릭터 패널의 인벤토리에서 소모품 옆 선택창으로 해요. */}
@@ -683,6 +717,7 @@ function App() {
             <div>H : 집·주점 출입</div>
             <div>F : 밭 구매·심기·수확</div>
             <div>Q : 액티브 스킬 발동</div>
+            <div>R : 광역(다중 타겟) 스킬 발동</div>
             <div>1~9, 0 : 소모품 단축키 (I키 인벤토리에서 등록)</div>
             <div>G : 사냥터·던전 게이트 입장</div>
             <div>H : 필드·던전(클리어 후)에서 나가기</div>
@@ -1021,23 +1056,40 @@ function App() {
                       함께하는 동료 {mercs.length}/{maxMercs}
                     </p>
 
-                    {mercs.map(m => (
-                      <div key={m.slot} style={{ marginBottom: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>
-                            {COMPANION_TYPES[m.id]?.name}
-                            ({COMPANION_TYPES[m.id]?.personality})
-                            {m.cls && ` · ${CLASS_TYPES[m.cls]?.icon} ${CLASS_TYPES[m.cls]?.name}`}
-                          </span>
-                          <button onClick={() => sceneRef.current.dismissCompanion(m.slot)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
-                            해고
-                          </button>
+                    {mercs.map(m => {
+                      const bondMax = playerStats.bondMaxLevel || 10;
+                      const isBondMaxed = (m.bondLevel || 1) >= bondMax;
+                      return (
+                        <div key={m.slot} style={{ marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>
+                              {COMPANION_TYPES[m.id]?.name}
+                              ({COMPANION_TYPES[m.id]?.personality})
+                              {m.cls && ` · ${CLASS_TYPES[m.cls]?.icon} ${CLASS_TYPES[m.cls]?.name}`}
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                onClick={() => sceneRef.current.talkToAlly(m.slot)}
+                                disabled={!m.canTalkToday}
+                                style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: m.canTalkToday ? 1 : 0.4, cursor: m.canTalkToday ? 'pointer' : 'not-allowed' }}
+                                title={m.canTalkToday ? '대화하면 유대감이 올라요' : '오늘은 이미 대화했어요'}
+                              >
+                                💬 대화
+                              </button>
+                              <button onClick={() => sceneRef.current.dismissCompanion(m.slot)} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                                해고
+                              </button>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
+                            Lv.{m.level || 1} (EXP {m.exp || 0}) · HP {Math.max(0, Math.round(m.hp))}/{m.maxHp}
+                          </div>
+                          <div style={{ fontSize: '11px', color: THEME.blue, marginTop: '2px' }}>
+                            💗 유대 Lv.{m.bondLevel || 1}{isBondMaxed ? ' (최고)' : ` (${m.bondExp || 0}/${m.bondExpNeeded})`}
+                          </div>
                         </div>
-                        <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
-                          Lv.{m.level || 1} (EXP {m.exp || 0}) · HP {Math.max(0, Math.round(m.hp))}/{m.maxHp}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {isFull ? (
                       <p style={{ fontSize: '12px', color: '#a8927a', marginBottom: '16px' }}>
@@ -1085,12 +1137,28 @@ function App() {
                       현재 정령: {COMPANION_TYPES[playerStats.spiritCompanionId]?.name}
                       ({COMPANION_TYPES[playerStats.spiritCompanionId]?.personality})
                     </span>
-                    <button onClick={() => sceneRef.current.dismissSpirit()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
-                      놓아주기
-                    </button>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        onClick={() => sceneRef.current.talkToAlly('spirit')}
+                        disabled={!playerStats.spiritCanTalkToday}
+                        style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px', opacity: playerStats.spiritCanTalkToday ? 1 : 0.4, cursor: playerStats.spiritCanTalkToday ? 'pointer' : 'not-allowed' }}
+                        title={playerStats.spiritCanTalkToday ? '대화하면 유대감이 올라요' : '오늘은 이미 대화했어요'}
+                      >
+                        💬 대화
+                      </button>
+                      <button onClick={() => sceneRef.current.dismissSpirit()} style={{ ...buttonStyle, fontSize: '11px', padding: '5px 8px' }}>
+                        놓아주기
+                      </button>
+                    </div>
                   </div>
                   <div style={{ fontSize: '11px', color: '#c9a66b', marginTop: '4px' }}>
                     Lv.{playerStats.spiritLevel || 1} (EXP {playerStats.spiritExp || 0})
+                  </div>
+                  <div style={{ fontSize: '11px', color: THEME.blue, marginTop: '2px' }}>
+                    💗 유대 Lv.{playerStats.spiritBondLevel || 1}
+                    {(playerStats.spiritBondLevel || 1) >= (playerStats.bondMaxLevel || 10)
+                      ? ' (최고)'
+                      : ` (${playerStats.spiritBondExp || 0}/${playerStats.spiritBondExpNeeded})`}
                   </div>
                 </div>
               ) : (
