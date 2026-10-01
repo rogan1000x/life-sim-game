@@ -3,7 +3,7 @@ import {
   GAME_CONFIG, ENTITY_TYPES, NPC_DATA, SHOP_ITEMS, BUILDING_TYPES, formatCurrency,
   CROP_TYPES, FARM_PLOTS, QUEST_TEMPLATES, COMPANION_TYPES, RANK_TIERS, CLASS_TYPES,
   CLASS_SKILLS, EQUIPMENT_SLOTS, CLASS_ACTIVE_SKILLS, HUNTING_GROUND_RANKS, HUNTING_GROUNDS,
-  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES
+  DUNGEON_RANKS, DUNGEONS, FIELD_ZONES, BOND_CONFIG
 } from './gameConfig';
 
 // 고용할 수 있는 용병(동료) 슬롯 목록이에요. 슬롯 개수가 곧 "최대 동행 인원"이라서,
@@ -15,6 +15,18 @@ const MERCENARY_SLOTS = ['mercenary_0', 'mercenary_1', 'mercenary_2'];
 // 1.0이면 플레이어와 똑같이, 0.5면 절반만 받아요. 동료의 레벨업 기준(레벨x20)이 플레이어(레벨x100)보다
 // 훨씬 가벼워서 동료가 너무 빨리 크면 이 값을 낮춰서 조절하면 돼요.
 const ALLY_SHARED_EXP_RATIO = 1.0;
+
+// 동료/정령이 전부 똑같이 움직이는 것처럼 보이던 문제를 고치기 위한 "개성" 표예요.
+// attackAngleDeg: 같은 몬스터를 공격할 때 몬스터를 중심으로 어느 방향에서 접근할지 (서로 겹치지 않게 분산).
+// idlePhase: 대기 중 미세하게 흔들리는 움직임의 위상 (유닛마다 다른 타이밍에 흔들리게).
+// speedMod: 이동속도 배율 (0.85~1.15 사이, 유닛별로 조금씩 빠르거나 느리게).
+const ALLY_PERSONALITY = {
+  mercenary_0: { attackAngleDeg: 0, idlePhase: 0, speedMod: 1.08 },
+  mercenary_1: { attackAngleDeg: 130, idlePhase: 2.1, speedMod: 0.92 },
+  mercenary_2: { attackAngleDeg: 250, idlePhase: 4.2, speedMod: 1.0 },
+  spirit: { attackAngleDeg: 60, idlePhase: 1.3, speedMod: 1.15 }
+};
+
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -155,7 +167,12 @@ export class GameScene extends Phaser.Scene {
       autoSkillTimer: null,
       attackCooldownEnd: 0,
       buffEndTime: 0,
-      isSpiritSummon: false
+      isSpiritSummon: false,
+      bondLevel: 1,
+      bondExp: 0,
+      bondMaxCelebrated: false,
+      lastTalkedDay: 0, // 유대감 "대화하기"를 마지막으로 한 게임 속 날짜 (하루 1회 제한용)
+      hitFlashUntil: 0 // 이 시각까지는 HP바가 흰색으로 번쩍여서 "방금 맞았다"는 걸 알려줘요
     };
   }
 
@@ -180,6 +197,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   // 로그에 "동료가"라고만 쓰면 여럿일 때 누군지 모르니, 유닛 이름을 꺼내주는 헬퍼예요.
+  getAllyPersonality(slot) {
+    return ALLY_PERSONALITY[slot] || { attackAngleDeg: 0, idlePhase: 0, speedMod: 1 };
+  }
+
   getAllyName(slot) {
     const id = this.allies[slot]?.id;
     return (id && COMPANION_TYPES[id]?.name) || '동료';
@@ -467,6 +488,7 @@ export class GameScene extends Phaser.Scene {
     // 유닛마다 오브젝트를 만들고 지울 필요가 없어서(=유령 오브젝트 걱정이 없어서) 가장 안전해요.
     this.allyHpBarGraphics = this.add.graphics();
     this.allyHpBarGraphics.setDepth(500);
+    this.allyLevelTexts = {}; // 슬롯별 레벨 표시 Text를 재사용하기 위한 캐시예요 (매 프레임 새로 만들지 않음)
 
     this.hpText = this.add.text(20, 20, 'HP: ' + this.hp, { fontSize: '20px', color: '#ff4444' });
 
@@ -509,6 +531,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.isInsideHouse) {
       this.allyHpBarGraphics.clear();
+      Object.values(this.allyLevelTexts).forEach(t => t.setVisible(false));
       this.handleMovement();
       this.checkHouseExit();
       this.handleReceptionistInteract();
@@ -641,7 +664,7 @@ export class GameScene extends Phaser.Scene {
             const companionMultiplier = myClassInfo?.companionBonusMultiplier || 1;
             const isBuffActive = this.time.now < ally.buffEndTime;
             const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
-            const effectiveAttackBonus = COMPANION_TYPES[ally.id].attackBonus + (ally.level - 1) * 2;
+            const effectiveAttackBonus = COMPANION_TYPES[ally.id].attackBonus + (ally.level - 1) * 2 + (ally.bondLevel - 1) * BOND_CONFIG.statBonusPerLevel;
 
             entity.hp -= effectiveAttackBonus * companionMultiplier * buffMultiplier;
           });
@@ -1173,7 +1196,11 @@ export class GameScene extends Phaser.Scene {
       activeQuestIds: this.activeQuestIds,
       allies: this.getAllySlots().reduce((acc, slot) => {
         const a = this.allies[slot];
-        acc[slot] = { id: a.id, cls: a.cls, level: a.level, exp: a.exp };
+        acc[slot] = {
+          id: a.id, cls: a.cls, level: a.level, exp: a.exp,
+          bondLevel: a.bondLevel, bondExp: a.bondExp,
+          bondMaxCelebrated: a.bondMaxCelebrated, lastTalkedDay: a.lastTalkedDay
+        };
         return acc;
       }, {}),
       hotbar: this.hotbar,
@@ -1217,15 +1244,24 @@ export class GameScene extends Phaser.Scene {
           .filter(slot => this.allies[slot].id)
           .map(slot => {
             const a = this.allies[slot];
-            return { slot, id: a.id, cls: a.cls, level: a.level, exp: a.exp, hp: a.hp, maxHp: a.maxHp };
+            return {
+              slot, id: a.id, cls: a.cls, level: a.level, exp: a.exp, hp: a.hp, maxHp: a.maxHp,
+              bondLevel: a.bondLevel, bondExp: a.bondExp, bondExpNeeded: a.bondLevel * BOND_CONFIG.expPerLevel,
+              canTalkToday: a.lastTalkedDay !== this.currentDay
+            };
           }),
         maxMercenaries: MERCENARY_SLOTS.length,
+        bondMaxLevel: BOND_CONFIG.maxLevel,
         hotbar: [...this.hotbar],
         // 소환사의 정령은 용병과 완전히 별개 유닛이라 새 키로 따로 내려줘요.
         // (화면에 표시하려면 UI 쪽에도 이 키들을 읽는 코드가 추가로 필요해요)
         spiritCompanionId: this.allies.spirit.id,
         spiritLevel: this.allies.spirit.level,
         spiritExp: this.allies.spirit.exp,
+        spiritBondLevel: this.allies.spirit.bondLevel,
+        spiritBondExp: this.allies.spirit.bondExp,
+        spiritBondExpNeeded: this.allies.spirit.bondLevel * BOND_CONFIG.expPerLevel,
+        spiritCanTalkToday: this.allies.spirit.lastTalkedDay !== this.currentDay,
         rank: this.rank,
         questsCompletedCount: this.questsCompletedCount,
         playerClass: this.playerClass,
@@ -1294,10 +1330,22 @@ export class GameScene extends Phaser.Scene {
     const s = this.primaryStats;
     const oldMaxHp = this.maxHp;
 
-    this.attackPower = 10 + s.str * 2 + this.bonusStats.attack;
+    // 동료/정령과 쌓은 유대감(Bond)도 플레이어 스탯에 소량 반영돼요. bonusStats처럼 누적시키지 않고
+    // 매번 현재 동료들의 유대 레벨을 합산해서 새로 계산하기 때문에, 동료를 해고해도 보너스가 저절로 빠져요.
+    let bondAttackBonus = 0;
+    let bondDefenseBonus = 0;
+    this.getAllySlots().forEach(slot => {
+      const ally = this.allies[slot];
+      if (!ally.id) return;
+      const bonus = (ally.bondLevel - 1) * BOND_CONFIG.statBonusPerLevel;
+      bondAttackBonus += bonus;
+      bondDefenseBonus += bonus;
+    });
+
+    this.attackPower = 10 + s.str * 2 + this.bonusStats.attack + bondAttackBonus;
     this.maxHp = 100 + s.vit * 8 + this.bonusStats.maxHp;
     this.moveSpeed = 200 + this.bonusStats.speed;
-    this.defense = s.vit * 1 + this.bonusStats.defense;
+    this.defense = s.vit * 1 + this.bonusStats.defense + bondDefenseBonus;
     this.critChance = Math.min(50, s.agi * 0.5 + this.bonusStats.critChance);
     this.critDamage = 150 + s.agi * 2;
     this.magicPower = s.int * 1;
@@ -1901,6 +1949,7 @@ export class GameScene extends Phaser.Scene {
       const actualDamage = Math.round(info2.damage * (1 - reductionPercent / 100));
 
       ally.hp -= actualDamage;
+      ally.hitFlashUntil = this.time.now + 250; // 0.25초 동안 HP바가 하얗게 번쩍여요
       this.addLog(`${this.getAllyName(slot)}이(가) ${info2.name}에게 ${actualDamage} 피해를 입음`, 'death');
 
       if (ally.hp <= 0) {
@@ -1932,8 +1981,9 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // 용병/정령 머리 위에 작은 HP바를 그려요. 쓰러진(KO) 유닛은 스프라이트가 숨겨져 있으니 바도 안 그려요.
-  // 색은 체력 비율에 따라 초록(60%↑) → 노랑(30%↑) → 빨강으로 바뀌어요.
+  // 용병/정령 머리 위에 작은 HP바 + 레벨 표시를 그려요. 쓰러진(KO) 유닛은 스프라이트가 숨겨져
+  // 있으니 바도 안 그려요. 색은 체력 비율에 따라 초록(60%↑) → 노랑(30%↑) → 빨강으로 바뀌고,
+  // 방금 맞았으면(hitFlashUntil) 0.25초간 하얗게 번쩍여서 피격을 더 잘 느끼게 해요.
   drawAllyHpBars() {
     const g = this.allyHpBarGraphics;
     g.clear();
@@ -1943,17 +1993,38 @@ export class GameScene extends Phaser.Scene {
 
     this.getAllySlots().forEach(slot => {
       const ally = this.allies[slot];
-      if (!ally.sprite || ally.isKO || ally.maxHp <= 0) return;
+      const levelText = this.allyLevelTexts[slot];
+
+      if (!ally.sprite || ally.isKO || ally.maxHp <= 0) {
+        if (levelText) levelText.setVisible(false);
+        return;
+      }
 
       const ratio = Phaser.Math.Clamp(ally.hp / ally.maxHp, 0, 1);
       const x = ally.sprite.x - barWidth / 2;
       const y = ally.sprite.y - ally.sprite.displayHeight / 2 - 12;
-      const fillColor = ratio > 0.6 ? 0x4caf50 : ratio > 0.3 ? 0xffc107 : 0xf44336;
+
+      const isFlashing = this.time.now < ally.hitFlashUntil;
+      // 번쩍이는 동안엔 100ms 간격으로 하양/원래색을 교대해서 "깜빡"거리는 느낌을 줘요
+      const baseColor = ratio > 0.6 ? 0x4caf50 : ratio > 0.3 ? 0xffc107 : 0xf44336;
+      const blink = isFlashing && Math.floor(this.time.now / 100) % 2 === 0;
+      const fillColor = blink ? 0xffffff : baseColor;
 
       g.fillStyle(0x000000, 0.7);
       g.fillRect(x - 1, y - 1, barWidth + 2, barHeight + 2);
       g.fillStyle(fillColor, 1);
       g.fillRect(x, y, barWidth * ratio, barHeight);
+
+      // 레벨 텍스트는 바 오른쪽에 작게 표시해요. 슬롯당 하나씩만 만들어서 재사용해요.
+      if (!levelText) {
+        const newText = this.add.text(0, 0, '', { fontSize: '10px', color: '#ffffff', backgroundColor: '#00000088', padding: { x: 2, y: 0 } });
+        newText.setDepth(500);
+        this.allyLevelTexts[slot] = newText;
+      }
+      const text = this.allyLevelTexts[slot];
+      text.setText(`Lv.${ally.level}`);
+      text.setPosition(x + barWidth + 3, y - 2);
+      text.setVisible(true);
     });
   }
 
@@ -1965,6 +2036,11 @@ export class GameScene extends Phaser.Scene {
     const ally = this.allies[slot];
     if (!ally.sprite || ally.isKO) return;
 
+    // 유닛마다 다른 "개성"(공격 접근 각도/흔들림 위상/이동속도 배율)을 적용해서, 여러 동료가
+    // 있어도 전부 같은 궤적으로 똑같이 움직이는 게 아니라 각자 다르게 움직이도록 해요.
+    const personality = this.getAllyPersonality(slot);
+    const speedMod = personality.speedMod;
+
     const lowHpThreshold = ally.maxHp * 0.3;
     const isLowHp = ally.hp < lowHpThreshold;
 
@@ -1972,7 +2048,7 @@ export class GameScene extends Phaser.Scene {
       const nearbyThreat = this.findNearestMonster(120, ally.sprite.x, ally.sprite.y);
       if (nearbyThreat) {
         const fleeAngle = Phaser.Math.Angle.Between(nearbyThreat.x, nearbyThreat.y, ally.sprite.x, ally.sprite.y);
-        ally.sprite.body.setVelocity(Math.cos(fleeAngle) * 190, Math.sin(fleeAngle) * 190);
+        ally.sprite.body.setVelocity(Math.cos(fleeAngle) * 190 * speedMod, Math.sin(fleeAngle) * 190 * speedMod);
         this.updateAllyFacing(slot, ally.sprite.x + Math.cos(fleeAngle), ally.sprite.y + Math.sin(fleeAngle));
         return;
       }
@@ -1982,14 +2058,19 @@ export class GameScene extends Phaser.Scene {
     const nearbyTarget = threatToPlayer || this.findNearestMonster(220, ally.sprite.x, ally.sprite.y);
 
     if (nearbyTarget) {
+      // 모든 동료가 몬스터의 정중앙을 향해 일직선으로 달려가면 한 점에 겹쳐서 "다같이 똑같이
+      // 움직이는" 것처럼 보여요. 그 대신 유닛별 각도(attackAngleDeg)만큼 몬스터 주위를 돌아
+      // 각자 다른 방향에서 접근하는 지점을 목표로 삼아요.
+      const angleRad = Phaser.Math.DegToRad(personality.attackAngleDeg);
       const attackRange = 55;
-      const distanceToTarget = Phaser.Math.Distance.Between(
-        ally.sprite.x, ally.sprite.y, nearbyTarget.x, nearbyTarget.y
-      );
+      const approachX = nearbyTarget.x + Math.cos(angleRad) * (attackRange * 0.6);
+      const approachY = nearbyTarget.y + Math.sin(angleRad) * (attackRange * 0.6);
 
-      if (distanceToTarget > attackRange) {
-        const angle = Phaser.Math.Angle.Between(ally.sprite.x, ally.sprite.y, nearbyTarget.x, nearbyTarget.y);
-        ally.sprite.body.setVelocity(Math.cos(angle) * 200, Math.sin(angle) * 200);
+      const distanceToApproach = Phaser.Math.Distance.Between(ally.sprite.x, ally.sprite.y, approachX, approachY);
+
+      if (distanceToApproach > 10) {
+        const angle = Phaser.Math.Angle.Between(ally.sprite.x, ally.sprite.y, approachX, approachY);
+        ally.sprite.body.setVelocity(Math.cos(angle) * 200 * speedMod, Math.sin(angle) * 200 * speedMod);
         this.updateAllyFacing(slot, nearbyTarget.x, nearbyTarget.y);
       } else {
         ally.sprite.body.setVelocity(0, 0);
@@ -2003,12 +2084,17 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // 슬롯마다 따라다니는 위치를 살짝 다르게 둬서(용병은 왼쪽 뒤, 정령은 오른쪽 뒤),
-    // 두 유닛을 동시에 데리고 다닐 때 같은 자리로 몰려서 겹치지 않게 해요.
+    // 슬롯마다 따라다니는 위치를 살짝 다르게 둬서(용병들은 왼쪽 뒤에 각자 다른 자리, 정령은
+    // 오른쪽 뒤), 여러 유닛을 동시에 데리고 다닐 때 같은 자리로 몰려서 겹치지 않게 해요.
+    // 거기에 유닛별 위상(idlePhase)으로 아주 살짝 제자리에서 흔들리게 해서, 가만히 서 있을
+    // 때도 모두가 얼음처럼 똑같이 멈춰있지 않고 각자 숨 쉬듯 움직이는 것처럼 보이게 해요.
     const followOffset = this.getAllyFormationOffset(slot);
-    const followTargetX = this.player.x + followOffset.x;
-    const followTargetY = this.player.y + followOffset.y;
-    const followDistance = 40;
+    const sway = 6;
+    const swayX = Math.sin(this.time.now / 600 + personality.idlePhase) * sway;
+    const swayY = Math.cos(this.time.now / 800 + personality.idlePhase) * sway;
+    const followTargetX = this.player.x + followOffset.x + swayX;
+    const followTargetY = this.player.y + followOffset.y + swayY;
+    const followDistance = 12;
 
     const distanceToFollowPoint = Phaser.Math.Distance.Between(
       ally.sprite.x, ally.sprite.y, followTargetX, followTargetY
@@ -2016,7 +2102,7 @@ export class GameScene extends Phaser.Scene {
 
     if (distanceToFollowPoint > followDistance) {
       const angle = Phaser.Math.Angle.Between(ally.sprite.x, ally.sprite.y, followTargetX, followTargetY);
-      ally.sprite.body.setVelocity(Math.cos(angle) * 180, Math.sin(angle) * 180);
+      ally.sprite.body.setVelocity(Math.cos(angle) * 180 * speedMod, Math.sin(angle) * 180 * speedMod);
       this.updateAllyFacing(slot, followTargetX, followTargetY);
     } else {
       ally.sprite.body.setVelocity(0, 0);
@@ -2047,7 +2133,7 @@ export class GameScene extends Phaser.Scene {
 
     const isBuffActive = this.time.now < ally.buffEndTime;
     const buffMultiplier = isBuffActive ? CLASS_ACTIVE_SKILLS.summoner.buffMultiplier : 1;
-    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2;
+    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2 + (ally.bondLevel - 1) * BOND_CONFIG.statBonusPerLevel;
     let damage = Math.round(effectiveAttackBonus * 2 * buffMultiplier);
 
     let isCompanionCrit = false;
@@ -2061,6 +2147,7 @@ export class GameScene extends Phaser.Scene {
     this.createParticleBurst(target.x, target.y, 0xffe066, isCompanionCrit ? 12 : 6);
 
     this.gainAllyExp(slot, 3);
+    this.gainBondExp(slot, BOND_CONFIG.combatGain, true);
 
     if (target.hp <= 0) this.defeatMonster(target, targetInfo);
   }
@@ -2091,6 +2178,91 @@ export class GameScene extends Phaser.Scene {
     if (!skipSync) this.syncStatsToReact();
   }
 
+  // 유대감(Bond) 경험치예요. 전투 레벨(gainAllyExp)과는 완전히 별개 축이라, 별도의 레벨/경험치를 써요.
+  // skipSync: 전투 중 자잘하게 자주 호출되니 매번 리액트로 동기화하지 않고 호출부가 알아서 처리하게 함.
+  gainBondExp(slot, amount, skipSync = false) {
+    const ally = this.allies[slot];
+    if (!ally.id) return;
+
+    ally.bondExp += amount;
+
+    let leveledUp = false;
+    while (ally.bondExp >= ally.bondLevel * BOND_CONFIG.expPerLevel) {
+      ally.bondExp -= ally.bondLevel * BOND_CONFIG.expPerLevel;
+      ally.bondLevel++;
+      leveledUp = true;
+    }
+
+    if (leveledUp) {
+      this.addLog(`${this.getAllyName(slot)}과(와)의 유대가 깊어졌어요! (유대 Lv.${ally.bondLevel})`, 'gain');
+      this.recalculateDerivedStats(); // 유대 보너스가 즉시 반영되도록
+
+      if (ally.bondLevel >= BOND_CONFIG.maxLevel && !ally.bondMaxCelebrated) {
+        ally.bondMaxCelebrated = true;
+        this.celebrateMaxBond(slot);
+      }
+    }
+
+    if (!skipSync) this.syncStatsToReact();
+  }
+
+  // 유대 레벨이 최고치에 처음 도달한 순간 한 번만 재생되는 축하 연출이에요.
+  celebrateMaxBond(slot) {
+    const ally = this.allies[slot];
+    const info = COMPANION_TYPES[ally.id];
+
+    if (ally.sprite) {
+      this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0xffd76a, 24);
+      this.createSkillUnlockEffect(ally.sprite.x, ally.sprite.y);
+    }
+    this.cameras.main.flash(400, 255, 215, 106);
+    this.addLog(`✨ ${this.getAllyName(slot)}과(와) 최고 수준의 유대를 쌓았어요!`, 'gain');
+
+    const maxLine = info?.bondDialogues?.[BOND_CONFIG.maxLevel];
+    if (maxLine && this.onDialogue) {
+      this.onDialogue(maxLine);
+      if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
+      this.dialogueTimer = setTimeout(() => { if (this.onDialogue) this.onDialogue(null); }, 4000);
+    }
+  }
+
+  // 주점에서 동료/정령에게 말을 걸어 유대감을 쌓는 기능이에요. 하루 한 번만 되고,
+  // 유대 레벨이 bondDialogues의 어느 단계를 막 넘겼는지에 맞춰 대사를 골라줘요
+  // (예: 방금 6레벨을 찍었으면 3레벨 대사가 아니라 6레벨 대사가 나옴).
+  talkToAlly(slot) {
+    const ally = this.allies[slot];
+    if (!ally.id) return;
+
+    if (ally.lastTalkedDay === this.currentDay) {
+      this.addLog('오늘은 이미 대화했어요. 내일 다시 말을 걸어보세요', 'info');
+      return;
+    }
+    ally.lastTalkedDay = this.currentDay;
+
+    const info = COMPANION_TYPES[ally.id];
+    const bondDialogues = info?.bondDialogues || {};
+    const unlockedLevels = Object.keys(bondDialogues).map(Number).filter(lv => ally.bondLevel >= lv);
+    const bestLevel = unlockedLevels.length > 0 ? Math.max(...unlockedLevels) : null;
+
+    let line;
+    if (bestLevel !== null) {
+      line = bondDialogues[bestLevel];
+    } else {
+      const talkLines = info?.talkLines || ['...'];
+      line = talkLines[Phaser.Math.Between(0, talkLines.length - 1)];
+    }
+
+    if (this.onDialogue) {
+      this.onDialogue(line);
+      if (this.dialogueTimer) clearTimeout(this.dialogueTimer);
+      this.dialogueTimer = setTimeout(() => { if (this.onDialogue) this.onDialogue(null); }, 3500);
+    }
+    this.addLog(`${this.getAllyName(slot)}과(와) 대화했어요`, 'info');
+
+    if (ally.sprite) this.createParticleBurst(ally.sprite.x, ally.sprite.y, 0xff9ec4, 8);
+    this.gainBondExp(slot, BOND_CONFIG.talkGain);
+  }
+
   startAllyAutoSkillTimer(slot) {
     const ally = this.allies[slot];
 
@@ -2117,7 +2289,7 @@ export class GameScene extends Phaser.Scene {
     const companionInfo = COMPANION_TYPES[ally.id];
     if (!skill || !companionInfo) return;
 
-    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2;
+    const effectiveAttackBonus = companionInfo.attackBonus + (ally.level - 1) * 2 + (ally.bondLevel - 1) * BOND_CONFIG.statBonusPerLevel;
     const baseDamage = effectiveAttackBonus * 3;
 
     if (ally.cls === 'warrior' || ally.cls === 'archer' || ally.cls === 'rogue') {
@@ -2129,6 +2301,7 @@ export class GameScene extends Phaser.Scene {
       this.createParticleBurst(target.x, target.y, 0xffe066, 10);
       this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! ${baseDamage} 피해`, 'kill');
       this.gainAllyExp(slot, 5);
+      this.gainBondExp(slot, BOND_CONFIG.combatGain, true);
 
       if (target.hp <= 0) this.defeatMonster(target, targetInfo);
     } else if (ally.cls === 'mage') {
@@ -2151,6 +2324,7 @@ export class GameScene extends Phaser.Scene {
 
       this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! 광역 피해`, 'kill');
       this.gainAllyExp(slot, 5);
+      this.gainBondExp(slot, BOND_CONFIG.combatGain, true);
     } else if (ally.cls === 'priest') {
       const healAmount = Math.round(skill.healAmount / 2);
       this.hp = Math.min(this.maxHp, this.hp + healAmount);
@@ -2158,6 +2332,7 @@ export class GameScene extends Phaser.Scene {
       this.createParticleBurst(this.player.x, this.player.y, 0x7ec8e3, 10);
       this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! HP +${healAmount}`, 'gain');
       this.gainAllyExp(slot, 4);
+      this.gainBondExp(slot, BOND_CONFIG.combatGain, true);
       this.syncStatsToReact();
     } else if (ally.cls === 'summoner') {
       const buffAmount = 5;
@@ -2166,6 +2341,7 @@ export class GameScene extends Phaser.Scene {
       this.createParticleBurst(this.player.x, this.player.y, 0xc77dff, 10);
       this.addLog(`${this.getAllyName(slot)}의 ${skill.name}! 공격력이 잠시 강해졌어요`, 'gain');
       this.gainAllyExp(slot, 4);
+      this.gainBondExp(slot, BOND_CONFIG.combatGain, true);
 
       this.time.delayedCall(skill.buffDurationMs, () => {
         this.bonusStats.attack -= buffAmount;
