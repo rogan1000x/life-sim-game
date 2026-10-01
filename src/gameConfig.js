@@ -510,12 +510,16 @@ export const CROP_TYPES = {
   tomato: { name: '토마토', growMinutes: 720, yieldMin: 2, yieldMax: 3, color: 0xe0483c }
 };
 
-// 밭 구역 위치 목록 - 각자 다른 가격을 가짐 (비싼 밭이 딱히 더 좋은 건 아니고, 지금은 위치만 다름)
-// 나중에 새 밭을 늘리고 싶으면 이 배열에 항목만 추가하면 됨 (집/NPC와 동일한 패턴)
+// 밭 구역 위치 목록이에요. 예전엔 마을 지도 한가운데 흩어져 있어서 마을이 좁아 보이는 가장 큰
+// 원인이었는데, 이제는 전부 "마을 외곽 텃밭"(VILLAGE_EXTENSIONS.outskirts_farm) 전용 공간
+// 안에서만 등장해요. 좌표는 그 전용 공간 안에서의 위치고, 밭도 3개 → 5개로 늘렸어요.
+// 나중에 더 늘리고 싶으면 이 배열에 항목만 추가하면 됨 (집/NPC와 동일한 패턴)
 export const FARM_PLOTS = [
-  { id: 'farm1', x: 550, y: 580, price: 200 },
-  { id: 'farm2', x: 350, y: 250, price: 350 },
-  { id: 'farm3', x: 750, y: 400, price: 500 }
+  { id: 'farm1', x: 250, y: 220, price: 200 },
+  { id: 'farm2', x: 400, y: 180, price: 250 },
+  { id: 'farm3', x: 550, y: 220, price: 350 },
+  { id: 'farm4', x: 300, y: 420, price: 450 },
+  { id: 'farm5', x: 500, y: 420, price: 600 }
 ];
 
 // 용병 등급 목록이에요. order는 등급의 순서를 숫자로 나타낸 거예요 (낮을수록 초급).
@@ -716,7 +720,7 @@ export const CLASS_AOE_SKILLS = {
   },
   mage: {
     id: 'aoe_mage_meteor', name: '메테오 샤워', key: 'R', cooldownMs: 15000,
-    range: Infinity, damageMultiplier: 1.6, useMagicPower: true,
+    radius: Infinity, damageMultiplier: 1.6, useMagicPower: true, // radius: Infinity = 화면(현재 공간)의 몬스터 전부가 범위에 들어감
     description: '화면에 있는 몬스터 전부에게 운석비를 떨어뜨려요 (마력 x1.6, 쿨타임이 긴 대신 범위가 가장 넓음)'
   },
   priest: {
@@ -751,9 +755,9 @@ export const HUNTING_GROUND_RANKS = {
 // 사냥터 게이트 배치 목록이에요. 집/밭과 같은 패턴(위치 배열)이라, 나중에 등급을
 // 늘리고 싶으면 여기에 항목만 추가하면 돼요.
 export const HUNTING_GROUNDS = [
-  { id: 'gate_f', x: 230, y: 220, rank: 'F' },
-  { id: 'gate_c', x: 680, y: 300, rank: 'C' },
-  { id: 'gate_a', x: 450, y: 500, rank: 'A' }
+  { id: 'gate_f', x: 250, y: 480, rank: 'F' },
+  { id: 'gate_c', x: 560, y: 460, rank: 'C' },
+  { id: 'gate_a', x: 400, y: 420, rank: 'A' }
 ];
 
 // 던전 등급 정의예요. 사냥터(HUNTING_GROUND_RANKS)랑 같은 모양(shape)의 데이터라
@@ -775,10 +779,21 @@ export const DUNGEON_RANKS = {
 // 던전 입구 배치 목록이에요. 처음엔 3개(F/S/SSS)만 배치하고, 나머지 등급은
 // 나중에 이 배열에 항목만 추가하면 됨 (사냥터와 동일한 확장 패턴)
 export const DUNGEONS = [
-  { id: 'dungeon_f', x: 100, y: 350, rank: 'F' },
-  { id: 'dungeon_s', x: 750, y: 150, rank: 'S' },
-  { id: 'dungeon_sss', x: 400, y: 570, rank: 'SSS' }
+  { id: 'dungeon_f', x: 180, y: 220, rank: 'F' },
+  { id: 'dungeon_s', x: 620, y: 220, rank: 'S' },
+  { id: 'dungeon_sss', x: 400, y: 90, rank: 'SSS' }
 ];
+
+// 마을을 확장하는 "구역" 목록이에요. FIELD_ZONES(전투용 별도 필드)와 비슷한 패턴이지만,
+// 이쪽은 몬스터가 없는 평화로운 마을 확장 공간이에요. 지금은 밭 전용 구역 하나뿐이지만,
+// 나중에 다른 구역(예: 광장, 시장 거리)을 늘리고 싶으면 여기에 항목만 추가하면 돼요.
+export const VILLAGE_EXTENSIONS = {
+  outskirts_farm: {
+    name: '마을 외곽 텃밭',
+    color: 0x6b8c4a,
+    entrance: { x: 300, y: 300 } // 마을 지도 안에서 입구가 놓일 좌표
+  }
+};
 
 // 건물(집) 종류 정의 - floorTile(바닥 이미지 키)과 furniture(가구 스프라이트 목록)로
 // 집마다 다른 조합을 줄 수 있음. 새 집을 늘리려면 여기에 항목만 추가하고
