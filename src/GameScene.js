@@ -349,12 +349,9 @@ export class GameScene extends Phaser.Scene {
 
     this.entities = this.add.group();
 
-    for (let i = 0; i < GAME_CONFIG.treeCount; i++) {
-      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'tree'));
-    }
-    for (let i = 0; i < GAME_CONFIG.stoneCount; i++) {
-      this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'stone'));
-    }
+    // 나무/돌은 더 이상 마을에 직접 나지 않아요. 동서남북 필드로 옮겨서, 필드마다 다른
+    // 테마(숲엔 나무/풀, 산엔 돌, 평야/해안엔 꽃/풀 위주)의 채집 공간이 되도록 했어요.
+    // (enterField()에서 zone.resources를 보고 필드별로 스폰함)
     for (let i = 0; i < GAME_CONFIG.rabbitCount; i++) {
       this.entities.add(this.createEntity(Phaser.Math.Between(50, 750), Phaser.Math.Between(50, 550), 'rabbit'));
     }
@@ -3065,6 +3062,19 @@ export class GameScene extends Phaser.Scene {
         monster.encounterType = 'field';
         monster.fieldZoneId = zoneId;
         this.entities.add(monster);
+      }
+    });
+
+    // 나무/돌/풀/꽃 같은 채집 자원도 몬스터와 같은 방식(fieldZoneId 꼬리표)으로 스폰해요.
+    // 필드를 나가면 몬스터처럼 전부 정리되고, 다시 들어오면 zone.resources 구성대로 새로 생겨요.
+    (zone.resources || []).forEach(resourceConfig => {
+      for (let i = 0; i < resourceConfig.count; i++) {
+        const spawnX = Phaser.Math.Between(150, FIELD_WORLD_WIDTH - 150);
+        const spawnY = Phaser.Math.Between(150, FIELD_WORLD_HEIGHT - 150);
+
+        const resource = this.createEntity(spawnX, spawnY, resourceConfig.type);
+        resource.fieldZoneId = zoneId;
+        this.entities.add(resource);
       }
     });
 

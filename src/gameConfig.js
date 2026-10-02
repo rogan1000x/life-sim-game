@@ -264,8 +264,8 @@ export const CLASS_SKILLS = {
 
 // 게임 전체 설정값 모음 (나중에 옵션 화면에서 조정 가능하게 분리해둠)
 export const GAME_CONFIG = {
-  treeCount: 3,
-  stoneCount: 2,
+  // treeCount/stoneCount는 더 이상 안 써요. 나무/돌은 마을이 아니라 동서남북 필드
+  // (FIELD_ZONES의 resources 목록)에서만 나요.
   rabbitCount: 3,
   wolfCount: 4,
   deerCount: 3,   // 사슴 - 순한 동물, 토끼보다 조금 더 비싼 사냥감
@@ -278,26 +278,33 @@ export const GAME_CONFIG = {
 
 // 동서남북 별도 필드 정의예요. 각 필드는 마을 지도와 완전히 분리된 독립 공간이에요.
 // entrance는 마을 지도 위에 입구가 놓일 좌표, monsters는 그 필드에서 스폰될 몬스터 구성이에요.
+// resources: 그 필드에서 채집할 수 있는 나무/돌/풀/꽃 구성이에요. 몬스터(monsters)와 똑같은
+// 패턴으로 enterField()에서 같이 스폰돼요. 필드마다 테마에 맞는 자원 비중을 다르게 줬어요
+// (숲엔 나무/풀, 산엔 돌, 평야/해안엔 꽃/풀 위주).
 export const FIELD_ZONES = {
   north: {
     name: '북쪽 숲 필드', color: 0x2d6b2d,
     entrance: { x: 400, y: 30 },
-    monsters: [{ type: 'wolf', count: 8 }, { type: 'goblin', count: 4 }, { type: 'skeleton', count: 5 }] // 필드가 넓어진 만큼 마리 수도 늘림
+    monsters: [{ type: 'wolf', count: 8 }, { type: 'goblin', count: 4 }, { type: 'skeleton', count: 5 }], // 필드가 넓어진 만큼 마리 수도 늘림
+    resources: [{ type: 'tree', count: 14 }, { type: 'grass', count: 10 }, { type: 'stone', count: 4 }, { type: 'flower', count: 3 }]
   },
   south: {
     name: '남쪽 평야 필드', color: 0x8b9a4a,
     entrance: { x: 400, y: 570 },
-    monsters: [{ type: 'goblin', count: 10 }] // 필드가 넓어진 만큼 마리 수도 늘림
+    monsters: [{ type: 'goblin', count: 10 }], // 필드가 넓어진 만큼 마리 수도 늘림
+    resources: [{ type: 'grass', count: 16 }, { type: 'flower', count: 10 }, { type: 'tree', count: 4 }, { type: 'stone', count: 2 }]
   },
   east: {
     name: '동쪽 산악 필드', color: 0x7a6a5a,
     entrance: { x: 770, y: 300 },
-    monsters: [{ type: 'bandit', count: 6 }, { type: 'wolf', count: 4 }] // 필드가 넓어진 만큼 마리 수도 늘림
+    monsters: [{ type: 'bandit', count: 6 }, { type: 'wolf', count: 4 }], // 필드가 넓어진 만큼 마리 수도 늘림
+    resources: [{ type: 'stone', count: 16 }, { type: 'tree', count: 5 }, { type: 'grass', count: 4 }, { type: 'flower', count: 2 }]
   },
   west: {
     name: '서쪽 해안 필드', color: 0x3a7a8a,
     entrance: { x: 30, y: 300 },
-    monsters: [{ type: 'goblin', count: 5 }, { type: 'bandit', count: 3 }] // 필드가 넓어진 만큼 마리 수도 늘림
+    monsters: [{ type: 'goblin', count: 5 }, { type: 'bandit', count: 3 }], // 필드가 넓어진 만큼 마리 수도 늘림
+    resources: [{ type: 'flower', count: 12 }, { type: 'grass', count: 8 }, { type: 'stone', count: 6 }, { type: 'tree', count: 3 }]
   }
 };
 
@@ -311,6 +318,14 @@ export const ENTITY_TYPES = {
   stone: {
     name: '돌', category: 'resource',
     exp: 15, color: 0x808080, radius: 18, sound: 250, hp: 1
+  },
+  grass: {
+    name: '풀', category: 'resource',
+    exp: 5, color: 0x6b9c3f, radius: 14, sound: 350, hp: 1
+  },
+  flower: {
+    name: '꽃', category: 'resource',
+    exp: 8, color: 0xe88ac2, radius: 12, sound: 500, hp: 1
   },
   rabbit: {
     name: '토끼', category: 'passive_animal',
@@ -469,6 +484,8 @@ export const SHOP_ITEMS = [
   { id: 'dungeon_rare_sss', name: '신화의 반지', basePrice: 1800, category: 'equipment', slot: 'ring', effectType: 'critChance', effectValue: 15, rareOnly: true, icon: null, maxDurability: 999 },
   { id: 'tree', name: '나무', basePrice: 5, category: 'resource', icon: null },
   { id: 'stone', name: '돌', basePrice: 8, category: 'resource', icon: null },
+  { id: 'grass', name: '풀', basePrice: 3, category: 'resource', icon: null },
+  { id: 'flower', name: '꽃', basePrice: 10, category: 'resource', icon: null },
   { id: 'rabbit', name: '토끼 고기', basePrice: 12, category: 'monster', icon: null },
   { id: 'wolf', name: '늑대 가죽', basePrice: 25, category: 'monster', icon: null },
   { id: 'deer', name: '사슴 가죽', basePrice: 18, category: 'monster', icon: null },
