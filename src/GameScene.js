@@ -25,6 +25,9 @@ const ALLY_SHARED_EXP_RATIO = 1.0;
 // 마을은 건물 좌표가 복잡하게 얽혀있어서 스크롤을 안 썼지만, 필드는 몬스터만 있어서 훨씬 간단해요.
 const FIELD_WORLD_WIDTH = 1600;
 const FIELD_WORLD_HEIGHT = 1200;
+// 필드 안에서 몬스터가 끊기지 않고 계속 나오게 하는 보충 주기예요. 처음 입장할 때 스폰되는
+// 물량(zone.monsters)과는 별개로, 그걸 다 잡고 나서도 이 주기마다 빈 자리를 다시 채워줘요.
+const FIELD_RESPAWN_INTERVAL_MS = 3500;
 // 마을(과 다른 실내/사냥터/던전 공간)에서 쓰는 원래 월드 경계예요. 필드에서 나갈 때 이 값으로 복원해요.
 const VILLAGE_WORLD_BOUNDS = { x: -50, y: -50, width: 900, height: 700 };
 
@@ -119,6 +122,12 @@ export class GameScene extends Phaser.Scene {
     this.nearbyFieldZone = null;
     this.isInsideField = false;
     this.currentFieldZone = null;
+    this.fieldSpawnTimer = null; // 필드 안에 있는 동안 몬스터를 계속 보충해주는 타이머
+
+    // 마을을 중세풍으로 꾸며주는 장식 오브젝트들(지붕/문/창문/굴뚝/우물/가로등/덤불 등)을
+    // 모아두는 곳이에요. 전부 물리 바디가 없는 순수 장식이라 게임플레이엔 영향이 없고,
+    // 집/던전/필드 등 다른 공간에 들어갈 때 villageRoads와 함께 한꺼번에 숨겨요.
+    this.villageDecorations = [];
 
     // 마을 외곽 텃밭 - 밭(FARM_PLOTS)을 전부 여기로 옮겨서, 좁던 마을 중심부에 여유를 줬어요.
     // 던전/필드처럼 완전히 독립된 공간이고, 전투는 없고 밭 작업만 하는 공간이에요.
@@ -331,6 +340,52 @@ export class GameScene extends Phaser.Scene {
     for (let y = 0; y <= 600; y += 40) graphics.lineBetween(0, y, 800, y);
     graphics.strokePath();
 
+    // 집들 사이에 흙길을 그려줘요. 중앙(플레이어 스폰 근처)을 허브 삼아 각 건물로 길이
+    // 뻗어나가는 모양이에요. setDepth로 다른 모든 오브젝트보다 아래 깔리게 해서, 길 위에
+    // 자연스럽게 건물/캐릭터가 서 있는 것처럼 보이게 해요.
+    const roadHub = { x: 400, y: 300 };
+    const roadDestinations = [
+      { x: 90, y: 90 },   // 창고(house4)
+      { x: 710, y: 90 },  // 이웃집(house2)
+      { x: 90, y: 510 },  // 여행자의 집(house3)
+      { x: 710, y: 510 }, // 내 집(myHouse)
+      { x: 560, y: 540 }, // 주점(tavern)
+      { x: 300, y: 300 }  // 마을 외곽 텃밭 입구
+    ];
+
+    this.villageRoads = this.add.graphics();
+    this.villageRoads.setDepth(-0.5);
+
+    roadDestinations.forEach(dest => {
+      // 어두운 흙색으로 두껍게 한 번, 그 위에 밝은 흙길을 조금 얇게 겹쳐 그려서
+      // 길 가장자리가 테두리처럼 또렷하게 보이게 해요.
+      this.villageRoads.lineStyle(26, 0x6b4f2e, 0.9);
+      this.villageRoads.lineBetween(roadHub.x, roadHub.y, dest.x, dest.y);
+      this.villageRoads.lineStyle(18, 0xb08a55, 0.95);
+      this.villageRoads.lineBetween(roadHub.x, roadHub.y, dest.x, dest.y);
+    });
+
+    // 마을 광장: 허브 지점에서 살짝 비켜난 자리에 돌바닥 + 우물을 둬서 "마을 중심" 느낌을 줘요.
+    // (플레이어가 정확히 roadHub 지점에서 스폰되기 때문에, 우물 자체는 조금 위쪽으로 옮겼어요)
+    const plazaCenter = { x: roadHub.x, y: roadHub.y - 40 };
+    const plaza = this.add.circle(plazaCenter.x, plazaCenter.y, 60, 0x8f8f8f, 0.55);
+    plaza.setDepth(-0.4);
+    const wellRim = this.add.circle(plazaCenter.x, plazaCenter.y, 17, 0x6b6b6b);
+    wellRim.setStrokeStyle(3, 0x4a4a4a);
+    const wellWater = this.add.circle(plazaCenter.x, plazaCenter.y, 10, 0x4a90a4);
+    this.villageDecorations.push(plaza, wellRim, wellWater);
+
+    // 길을 따라 가로등을 몇 개 세워요 (허브 ~ 각 목적지 중간 지점쯤에 하나씩).
+    roadDestinations.forEach(dest => {
+      const midX = (roadHub.x + dest.x) / 2;
+      const midY = (roadHub.y + dest.y) / 2;
+
+      const post = this.add.rectangle(midX, midY, 4, 26, 0x4a3a2a);
+      const lamp = this.add.circle(midX, midY - 15, 6, 0xffe08a);
+      lamp.setStrokeStyle(1, 0xcc9933);
+      this.villageDecorations.push(post, lamp);
+    });
+
     Object.keys(ENTITY_TYPES).forEach(key => {
       const info = ENTITY_TYPES[key];
       if (info.renderType !== 'sprite') return;
@@ -438,6 +493,12 @@ export class GameScene extends Phaser.Scene {
 
     housePositions.forEach(pos => {
       this.houses.add(this.createHouse(pos.x, pos.y, pos.type));
+
+      // 집 앞에 작은 덤불/화단을 2개씩 놔서 밋밋한 벽 아래가 허전해 보이지 않게 해요.
+      // 색을 집마다 조금씩 다르게 둬서(초록/분홍 번갈아) 획일적으로 안 보이게 함.
+      const bushColor = (pos.x + pos.y) % 2 === 0 ? 0x4a7c3c : 0xd87fa8;
+      this.createDecorBush(pos.x - 30, pos.y + BUILDING_TYPES[pos.type].height / 2 + 6, bushColor);
+      this.createDecorBush(pos.x + 30, pos.y + BUILDING_TYPES[pos.type].height / 2 + 6, bushColor);
     });
 
     FARM_PLOTS.forEach(plotConfig => {
@@ -991,7 +1052,49 @@ export class GameScene extends Phaser.Scene {
     const house = this.add.rectangle(x, y, info.width, info.height, info.color);
     house.buildingType = typeKey;
     this.physics.add.existing(house, true);
+
+    // 중세풍 디테일(지붕/문/창문/굴뚝)을 덧그려서 그냥 색 네모가 아니라 집처럼 보이게 해요.
+    // 전부 물리 바디가 없는 장식용 오브젝트라 충돌 판정(위 house 사각형)에는 영향 없어요.
+    // house보다 나중에 만들어서, 같은 깊이(depth)에서는 나중에 그려진 게 위로 올라오는
+    // 특성상 자연스럽게 벽(house) 위에 지붕/문/창문이 겹쳐 보여요.
+    const roofHeight = 24;
+    const roofWidth = info.width + 20;
+    const roofColor = 0x5a2f1f;
+    const roof = this.add.triangle(
+      x, y - info.height / 2 - roofHeight / 2 + 2,
+      -roofWidth / 2, roofHeight / 2,
+      roofWidth / 2, roofHeight / 2,
+      0, -roofHeight / 2,
+      roofColor
+    );
+    roof.setStrokeStyle(2, 0x2e1710);
+
+    const chimney = this.add.rectangle(
+      x + info.width / 2 - 14, y - info.height / 2 - roofHeight + 4, 9, 18, 0x6b6b6b
+    );
+    chimney.setStrokeStyle(1, 0x4a4a4a);
+
+    const door = this.add.rectangle(x, y + info.height / 2 - 13, 15, 24, 0x3a2414);
+    door.setStrokeStyle(1, 0x241709);
+
+    const windowColor = 0xffe9a8;
+    const window1 = this.add.rectangle(x - info.width / 4, y - 2, 11, 11, windowColor);
+    window1.setStrokeStyle(1, 0x5a3a20);
+    const window2 = this.add.rectangle(x + info.width / 4, y - 2, 11, 11, windowColor);
+    window2.setStrokeStyle(1, 0x5a3a20);
+
+    this.villageDecorations.push(roof, chimney, door, window1, window2);
+
     return house;
+  }
+
+  // 주점 등 특히 큰 건물 주변에 놓는 작은 소품(화단/덤불)을 만들어줘요. 완전히 장식용이라
+  // 밟고 지나갈 수 있고, 전투/채집 대상도 아니에요 (entities 그룹에는 안 들어가요).
+  createDecorBush(x, y, color) {
+    const bush = this.add.circle(x, y, 9, color);
+    bush.setStrokeStyle(1, 0x2d4a1a, 0.6);
+    this.villageDecorations.push(bush);
+    return bush;
   }
 
   createNpc(x, y, npcTypeKey) {
@@ -1059,6 +1162,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   setOutdoorObjectsActive(isActive) {
+    if (this.villageRoads) this.villageRoads.setVisible(isActive);
+    this.villageDecorations.forEach(obj => {
+      obj.setVisible(isActive);
+      obj.alpha = isActive ? 1 : 0;
+    });
+
     this.entities.getChildren().forEach(entity => {
       this.refreshEntityVisual(entity);
     });
@@ -3079,11 +3188,55 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.addLog(`${zone.name}에 입장했어요 (예전보다 훨씬 넓어요!)`, 'info');
+
+    // 헥사류 게임처럼, 다 잡아도 몬스터가 끊기지 않고 계속 나오게 하는 보충 타이머예요.
+    // 처음 스폰 물량(zone.monsters)을 다 잡은 뒤에도 이 타이머가 주기적으로 빈 자리를 채워줘요.
+    if (this.fieldSpawnTimer) this.fieldSpawnTimer.remove();
+    this.fieldSpawnTimer = this.time.addEvent({
+      delay: FIELD_RESPAWN_INTERVAL_MS,
+      loop: true,
+      callback: () => this.spawnFieldMonsterIfNeeded(zoneId, zone)
+    });
+  }
+
+  // 필드 몬스터 개체 수가 처음 입장 때 물량(목표치) 아래로 떨어지면 하나씩 보충해줘요.
+  // 플레이어 바로 옆에서 갑자기 튀어나오면 당황스러우니, 되도록 플레이어에게서 좀 떨어진
+  // 곳에 스폰되도록 몇 번 시도해봐요 (완전히 못 피하면 그냥 그 자리에 스폰함).
+  spawnFieldMonsterIfNeeded(zoneId, zone) {
+    if (!this.isInsideField || this.currentFieldZone !== zoneId) return;
+
+    const targetTotal = zone.monsters.reduce((sum, m) => sum + m.count, 0);
+    const currentAlive = this.entities.getChildren().filter(e =>
+      e.active && e.fieldZoneId === zoneId && ENTITY_TYPES[e.entityType].category === 'hostile_monster'
+    ).length;
+
+    if (currentAlive >= targetTotal) return;
+
+    const monsterConfig = zone.monsters[Phaser.Math.Between(0, zone.monsters.length - 1)];
+
+    let spawnX, spawnY, distanceFromPlayer;
+    let attempts = 0;
+    do {
+      spawnX = Phaser.Math.Between(150, FIELD_WORLD_WIDTH - 150);
+      spawnY = Phaser.Math.Between(150, FIELD_WORLD_HEIGHT - 150);
+      distanceFromPlayer = Phaser.Math.Distance.Between(spawnX, spawnY, this.player.x, this.player.y);
+      attempts++;
+    } while (distanceFromPlayer < 300 && attempts < 10);
+
+    const monster = this.createEntity(spawnX, spawnY, monsterConfig.type);
+    monster.encounterType = 'field';
+    monster.fieldZoneId = zoneId;
+    this.entities.add(monster);
   }
 
   // 필드에서 나갈 때 호출돼요. 언제든(H키) 자유롭게 나갈 수 있음
   exitField() {
     this.isInsideField = false;
+
+    if (this.fieldSpawnTimer) {
+      this.fieldSpawnTimer.remove();
+      this.fieldSpawnTimer = null;
+    }
 
     // group.remove(대상, true, true)로 그룹에서 확실히 빼고 destroy까지 함께 처리해요.
     // 배열을 [...]로 먼저 복사하는 이유는, forEach 도중에 remove가 그룹의 원본 배열을
