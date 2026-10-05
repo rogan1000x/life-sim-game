@@ -340,51 +340,80 @@ export class GameScene extends Phaser.Scene {
     for (let y = 0; y <= 600; y += 40) graphics.lineBetween(0, y, 800, y);
     graphics.strokePath();
 
-    // 집들 사이에 흙길을 그려줘요. 중앙(플레이어 스폰 근처)을 허브 삼아 각 건물로 길이
-    // 뻗어나가는 모양이에요. setDepth로 다른 모든 오브젝트보다 아래 깔리게 해서, 길 위에
-    // 자연스럽게 건물/캐릭터가 서 있는 것처럼 보이게 해요.
-    const roadHub = { x: 400, y: 300 };
-    const roadDestinations = [
-      { x: 90, y: 90 },   // 창고(house4)
-      { x: 710, y: 90 },  // 이웃집(house2)
-      { x: 90, y: 510 },  // 여행자의 집(house3)
-      { x: 710, y: 510 }, // 내 집(myHouse)
-      { x: 560, y: 540 }, // 주점(tavern)
-      { x: 300, y: 300 }  // 마을 외곽 텃밭 입구
-    ];
+    // 큰길(메인 스트리트)을 마을 가운데 십자(+) 모양으로 깔고, 집/필드/게이트는 전부
+    // 거기서 제일 가까운 지점으로 짧게 연결돼요. 예전엔 모든 길이 중앙 허브 한 점으로
+    // 몰려서 그 주변이 심하게 붐볐는데, 이제는 연결 지점이 큰길을 따라 쭉 퍼져있어서
+    // 한 곳에 오브젝트가 뭉치지 않아요. 가로/세로 큰길은 각각 동서/남북 필드 입구까지
+    // 그대로 이어져서, 큰길을 따라 걷다 보면 자연스럽게 필드 입구에 닿게 돼요.
+    const MAIN_STREET = {
+      y: 300, xRange: [30, 770],  // 가로 큰길 (서쪽 필드 ~ 동쪽 필드)
+      x: 400, yRange: [30, 570]   // 세로 큰길 (북쪽 필드 ~ 남쪽 필드)
+    };
 
     this.villageRoads = this.add.graphics();
     this.villageRoads.setDepth(-0.5);
 
-    roadDestinations.forEach(dest => {
+    const drawRoad = (x1, y1, x2, y2, width) => {
       // 어두운 흙색으로 두껍게 한 번, 그 위에 밝은 흙길을 조금 얇게 겹쳐 그려서
       // 길 가장자리가 테두리처럼 또렷하게 보이게 해요.
-      this.villageRoads.lineStyle(26, 0x6b4f2e, 0.9);
-      this.villageRoads.lineBetween(roadHub.x, roadHub.y, dest.x, dest.y);
-      this.villageRoads.lineStyle(18, 0xb08a55, 0.95);
-      this.villageRoads.lineBetween(roadHub.x, roadHub.y, dest.x, dest.y);
-    });
+      this.villageRoads.lineStyle(width + 8, 0x6b4f2e, 0.9);
+      this.villageRoads.lineBetween(x1, y1, x2, y2);
+      this.villageRoads.lineStyle(width, 0xb08a55, 0.95);
+      this.villageRoads.lineBetween(x1, y1, x2, y2);
+    };
 
-    // 마을 광장: 허브 지점에서 살짝 비켜난 자리에 돌바닥 + 우물을 둬서 "마을 중심" 느낌을 줘요.
-    // (플레이어가 정확히 roadHub 지점에서 스폰되기 때문에, 우물 자체는 조금 위쪽으로 옮겼어요)
-    const plazaCenter = { x: roadHub.x, y: roadHub.y - 40 };
-    const plaza = this.add.circle(plazaCenter.x, plazaCenter.y, 60, 0x8f8f8f, 0.55);
-    plaza.setDepth(-0.4);
-    const wellRim = this.add.circle(plazaCenter.x, plazaCenter.y, 17, 0x6b6b6b);
-    wellRim.setStrokeStyle(3, 0x4a4a4a);
-    const wellWater = this.add.circle(plazaCenter.x, plazaCenter.y, 10, 0x4a90a4);
-    this.villageDecorations.push(plaza, wellRim, wellWater);
+    // 큰길 본선 (가로/세로 둘 다 좁은 골목보다 두껍게 그려서 "큰길"이라는 느낌을 줘요)
+    drawRoad(MAIN_STREET.xRange[0], MAIN_STREET.y, MAIN_STREET.xRange[1], MAIN_STREET.y, 30);
+    drawRoad(MAIN_STREET.x, MAIN_STREET.yRange[0], MAIN_STREET.x, MAIN_STREET.yRange[1], 30);
 
-    // 길을 따라 가로등을 몇 개 세워요 (허브 ~ 각 목적지 중간 지점쯤에 하나씩).
+    // 아무 지점이나 넣으면, 큰길 위에서 제일 가까운 접속점을 찾아줘요 (세로길이 더 가까우면
+    // 세로길로, 가로길이 더 가까우면 가로길로 뻗어요). 결과적으로 항상 직각으로 꺾이는
+    // 골목길이 만들어져요.
+    const nearestMainStreetPoint = (x, y) => {
+      const candidates = [];
+      if (y >= MAIN_STREET.yRange[0] && y <= MAIN_STREET.yRange[1]) {
+        candidates.push({ x: MAIN_STREET.x, y, dist: Math.abs(x - MAIN_STREET.x) });
+      }
+      if (x >= MAIN_STREET.xRange[0] && x <= MAIN_STREET.xRange[1]) {
+        candidates.push({ x, y: MAIN_STREET.y, dist: Math.abs(y - MAIN_STREET.y) });
+      }
+      if (candidates.length === 0) return { x: MAIN_STREET.x, y: MAIN_STREET.y };
+      return candidates.sort((a, b) => a.dist - b.dist)[0];
+    };
+
+    // 큰길과 연결할 목적지들: 집/주점, 마을 외곽 텃밭 입구, 사냥터 게이트, 던전 입구,
+    // 동서남북 필드 입구(이미 큰길 양 끝과 맞닿아있어서 실제로는 골목이 안 그려짐).
+    const roadDestinations = [
+      { x: 90, y: 90 }, { x: 710, y: 90 }, { x: 90, y: 510 }, { x: 710, y: 510 }, { x: 560, y: 540 },
+      VILLAGE_EXTENSIONS.outskirts_farm.entrance,
+      ...HUNTING_GROUNDS.map(g => ({ x: g.x, y: g.y })),
+      ...DUNGEONS.map(d => ({ x: d.x, y: d.y })),
+      ...Object.values(FIELD_ZONES).map(z => z.entrance)
+    ];
+
     roadDestinations.forEach(dest => {
-      const midX = (roadHub.x + dest.x) / 2;
-      const midY = (roadHub.y + dest.y) / 2;
+      const joint = nearestMainStreetPoint(dest.x, dest.y);
+      if (Phaser.Math.Distance.Between(dest.x, dest.y, joint.x, joint.y) < 4) return; // 이미 큰길 위라 골목 불필요
 
+      drawRoad(joint.x, joint.y, dest.x, dest.y, 16);
+
+      // 골목 중간쯤에 가로등을 하나씩 세워요.
+      const midX = (joint.x + dest.x) / 2;
+      const midY = (joint.y + dest.y) / 2;
       const post = this.add.rectangle(midX, midY, 4, 26, 0x4a3a2a);
       const lamp = this.add.circle(midX, midY - 15, 6, 0xffe08a);
       lamp.setStrokeStyle(1, 0xcc9933);
       this.villageDecorations.push(post, lamp);
     });
+
+    // 마을 광장: 교차로 바로 위가 아니라, 살짝 비켜난 조용한 자리에 돌바닥 + 우물을 둬요.
+    const plazaCenter = { x: 440, y: 350 };
+    const plaza = this.add.circle(plazaCenter.x, plazaCenter.y, 48, 0x8f8f8f, 0.55);
+    plaza.setDepth(-0.4);
+    const wellRim = this.add.circle(plazaCenter.x, plazaCenter.y, 16, 0x6b6b6b);
+    wellRim.setStrokeStyle(3, 0x4a4a4a);
+    const wellWater = this.add.circle(plazaCenter.x, plazaCenter.y, 10, 0x4a90a4);
+    this.villageDecorations.push(plaza, wellRim, wellWater);
 
     Object.keys(ENTITY_TYPES).forEach(key => {
       const info = ENTITY_TYPES[key];
@@ -472,10 +501,11 @@ export class GameScene extends Phaser.Scene {
     this.npcs = this.add.group();
     // 마을이 좁아 보인다는 피드백으로 재배치했어요. 밭을 "마을 외곽 텃밭"으로 전부 옮기면서
     // 생긴 중앙 공간을 활용해 건물/NPC/게이트 사이 간격을 전체적으로 넓혔어요.
+    // 큰길(세로 x=400 / 가로 y=300)을 막지 않도록, NPC들을 길에서 충분히 떨어뜨려놨어요.
     const npcPositions = [
-      { x: 400, y: 170, type: 'villager1' },
-      { x: 220, y: 330, type: 'villager2' },
-      { x: 580, y: 330, type: 'villager3' }
+      { x: 460, y: 230, type: 'villager1' },
+      { x: 220, y: 380, type: 'villager2' },
+      { x: 580, y: 380, type: 'villager3' }
     ];
     npcPositions.forEach(pos => {
       this.npcs.add(this.createNpc(pos.x, pos.y, pos.type));

@@ -774,7 +774,7 @@ export const HUNTING_GROUND_RANKS = {
 export const HUNTING_GROUNDS = [
   { id: 'gate_f', x: 250, y: 480, rank: 'F' },
   { id: 'gate_c', x: 560, y: 460, rank: 'C' },
-  { id: 'gate_a', x: 400, y: 420, rank: 'A' }
+  { id: 'gate_a', x: 460, y: 420, rank: 'A' } // 큰길(세로, x=400)을 막지 않도록 옆으로 비켜뒀어요
 ];
 
 // 던전 등급 정의예요. 사냥터(HUNTING_GROUND_RANKS)랑 같은 모양(shape)의 데이터라
@@ -798,7 +798,7 @@ export const DUNGEON_RANKS = {
 export const DUNGEONS = [
   { id: 'dungeon_f', x: 180, y: 220, rank: 'F' },
   { id: 'dungeon_s', x: 620, y: 220, rank: 'S' },
-  { id: 'dungeon_sss', x: 400, y: 90, rank: 'SSS' }
+  { id: 'dungeon_sss', x: 280, y: 140, rank: 'SSS' } // 큰길(세로, x=400)을 막지 않도록 옆으로 비켜뒀어요
 ];
 
 // 마을을 확장하는 "구역" 목록이에요. FIELD_ZONES(전투용 별도 필드)와 비슷한 패턴이지만,
@@ -808,7 +808,7 @@ export const VILLAGE_EXTENSIONS = {
   outskirts_farm: {
     name: '마을 외곽 텃밭',
     color: 0x6b8c4a,
-    entrance: { x: 300, y: 300 } // 마을 지도 안에서 입구가 놓일 좌표
+    entrance: { x: 260, y: 340 } // 큰길(가로, y=300)을 막지 않도록 살짝 아래로 비켜뒀어요
   }
 };
 
