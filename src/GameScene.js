@@ -644,10 +644,29 @@ export class GameScene extends Phaser.Scene {
     this.brightnessOverlay.setDepth(998);
     this.brightnessOverlay.setAlpha(0);
 
+    // 상호작용 가능한 대상(바로 위) 머리 위에 뜨는 키 안내 말풍선들이에요. NPC/집/밭/게이트마다
+    // 하나씩 재사용하고, 매 프레임 가까운 대상 위로 위치만 옮겨요. 화면 고정 UI가 아니라
+    // 월드 좌표를 따라다녀야 해서(필드에서 카메라가 스크롤되니까) scrollFactor는 기본값(1) 그대로 둬요.
+    this.npcPrompt = this.createInteractPrompt('💬 E');
+    this.housePrompt = this.createInteractPrompt('🚪 H');
+    this.farmPrompt = this.createInteractPrompt('🌱 F');
+    this.gatePrompt = this.createInteractPrompt('➡ G');
+
     this.isInsideHouse = false;
     this.isDead = false;
 
     this.syncStatsToReact();
+  }
+
+  createInteractPrompt(label) {
+    const prompt = this.add.text(0, 0, label, {
+      fontSize: '13px', color: '#ffffff', backgroundColor: '#1a1a1acc',
+      padding: { x: 6, y: 3 }
+    });
+    prompt.setOrigin(0.5, 1);
+    prompt.setDepth(600);
+    prompt.setVisible(false);
+    return prompt;
   }
 
   update(time, delta) {
@@ -656,6 +675,15 @@ export class GameScene extends Phaser.Scene {
 
     this.updateGameClock(delta);
     this.handleHotbarInput(); // 집 안에서도 포션은 쓸 수 있어야 해서, 실내 분기보다 먼저 처리해요
+
+    // 상호작용 말풍선은 기본적으로 전부 꺼두고, 아래 각 분기에서 실제로 가까운 대상이 있을
+    // 때만 다시 켜요. 이렇게 먼저 꺼두지 않으면 공간을 이동했을 때 이전 공간에서 쓰던
+    // 말풍선이 그대로 화면에 남아있을 수 있어요.
+    this.npcPrompt.setVisible(false);
+    this.housePrompt.setVisible(false);
+    this.gatePrompt.setVisible(false);
+    this.farmPrompt.setVisible(false);
+    const promptBob = Math.sin(this.time.now / 300) * 4; // 살짝 위아래로 까딱이는 효과
 
     if (this.isInsideHouse) {
       this.allyHpBarGraphics.clear();
@@ -840,6 +868,11 @@ export class GameScene extends Phaser.Scene {
         if (info.hasShop && this.onShopToggle) this.onShopToggle();
       }
 
+      if (this.nearbyNpc) {
+        this.npcPrompt.setVisible(true);
+        this.npcPrompt.setPosition(this.nearbyNpc.x, this.nearbyNpc.y - 55 + promptBob);
+      }
+
       this.nearbyHouse = null;
       this.houses.getChildren().forEach(house => {
         const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, house.x, house.y);
@@ -848,6 +881,12 @@ export class GameScene extends Phaser.Scene {
 
       if (Phaser.Input.Keyboard.JustDown(this.hKey) && this.nearbyHouse) {
         this.toggleHouse();
+      }
+
+      if (this.nearbyHouse) {
+        const houseInfo = BUILDING_TYPES[this.nearbyHouse.buildingType];
+        this.housePrompt.setVisible(true);
+        this.housePrompt.setPosition(this.nearbyHouse.x, this.nearbyHouse.y - houseInfo.height / 2 - 45 + promptBob);
       }
 
       this.nearbyGate = null;
@@ -874,22 +913,36 @@ export class GameScene extends Phaser.Scene {
         this.player.x, this.player.y, outskirtsZone.entrance.x, outskirtsZone.entrance.y
       ) < 90;
 
+      // 어떤 게이트가 가장 가까운지는 아래 if/else 우선순위 그대로예요. 상단 배너
+      // (buildingNameText, 이름+키 안내)와 게이트 바로 위 말풍선(gatePrompt, 키만 짧게)을
+      // 같은 대상에 대해 같이 띄워줘요.
+      let nearbyGateTarget = null;
+
       if (this.nearbyDungeonGate) {
         const rankInfo = DUNGEON_RANKS[this.nearbyDungeonGate.rank];
         this.buildingNameText.setText(`${rankInfo.name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
+        nearbyGateTarget = this.nearbyDungeonGate;
       } else if (this.nearbyFieldZone) {
         this.buildingNameText.setText(`${FIELD_ZONES[this.nearbyFieldZone].name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
+        nearbyGateTarget = FIELD_ZONES[this.nearbyFieldZone].entrance;
       } else if (this.nearbyOutskirts) {
         this.buildingNameText.setText(`${outskirtsZone.name} 입구 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
+        nearbyGateTarget = outskirtsZone.entrance;
       } else if (this.nearbyGate) {
         const rankInfo = HUNTING_GROUND_RANKS[this.nearbyGate.rank];
         this.buildingNameText.setText(`${rankInfo.name} 사냥터 게이트 (G키로 입장)`);
         this.buildingNameText.setVisible(true);
+        nearbyGateTarget = this.nearbyGate;
       } else {
         this.buildingNameText.setVisible(false);
+      }
+
+      if (nearbyGateTarget) {
+        this.gatePrompt.setVisible(true);
+        this.gatePrompt.setPosition(nearbyGateTarget.x, nearbyGateTarget.y - 40 + promptBob);
       }
 
       if (Phaser.Input.Keyboard.JustDown(this.gKey)) {
@@ -918,6 +971,11 @@ export class GameScene extends Phaser.Scene {
 
       if (Phaser.Input.Keyboard.JustDown(this.fKey) && this.nearbyFarmPlot) {
         this.handleFarmInteract(this.nearbyFarmPlot.id);
+      }
+
+      if (this.nearbyFarmPlot) {
+        this.farmPrompt.setVisible(true);
+        this.farmPrompt.setPosition(this.nearbyFarmPlot.x, this.nearbyFarmPlot.y - 45 + promptBob);
       }
 
       if (Phaser.Input.Keyboard.JustDown(this.hKey)) {
