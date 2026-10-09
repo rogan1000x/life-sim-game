@@ -449,6 +449,12 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.existing(this.player);
     this.player.body.setCollideWorldBounds(true);
 
+    // 플레이어 충돌 판정을 스프라이트 전체(80x80)가 아니라 "발 쪽 작은 상자"로 줄였어요.
+    // 몸 전체가 건물/NPC 모서리에 걸리던 게 이동이 답답했던 큰 원인이었어요.
+    // setSize/setOffset은 스케일(5배) 적용 전 원본 픽셀 기준이라, 12x10 → 실제 60x50px이에요.
+    this.player.body.setSize(12, 10);
+    this.player.body.setOffset(2, 6);
+
     this.facingDirection = 'down';
     this.directionFrames = { left: 0, down: 1, up: 2, right: 3, idleLeft: 4, idleDown: 5, idleUp: 6, idleRight: 7 };
 
@@ -990,13 +996,23 @@ export class GameScene extends Phaser.Scene {
     let direction = this.facingDirection;
 
     if (!this.isKnockedBack) {
-      if (this.cursors.left.isDown) { velocityX = -this.moveSpeed; direction = 'left'; }
-      else if (this.cursors.right.isDown) { velocityX = this.moveSpeed; direction = 'right'; }
+      if (this.cursors.left.isDown) { velocityX = -1; direction = 'left'; }
+      else if (this.cursors.right.isDown) { velocityX = 1; direction = 'right'; }
 
-      if (this.cursors.up.isDown) { velocityY = -this.moveSpeed; if (velocityX === 0) direction = 'up'; }
-      else if (this.cursors.down.isDown) { velocityY = this.moveSpeed; if (velocityX === 0) direction = 'down'; }
+      if (this.cursors.up.isDown) { velocityY = -1; if (velocityX === 0) direction = 'up'; }
+      else if (this.cursors.down.isDown) { velocityY = 1; if (velocityX === 0) direction = 'down'; }
 
-      this.player.body.setVelocity(velocityX, velocityY);
+      // 예전엔 X/Y 속도를 각각 moveSpeed로 그대로 넣어서, 대각선으로 움직이면
+      // 벡터 길이가 moveSpeed*√2(약 1.4배)가 되는 버그가 있었어요(대각선이 더 빠름).
+      // 방향만 먼저 구한 뒤 벡터를 정규화해서, 어느 방향이든 실제 속도가 항상 moveSpeed로
+      // 똑같게 만들었어요.
+      if (velocityX !== 0 && velocityY !== 0) {
+        const normalize = Math.SQRT1_2; // 1/√2
+        velocityX *= normalize;
+        velocityY *= normalize;
+      }
+
+      this.player.body.setVelocity(velocityX * this.moveSpeed, velocityY * this.moveSpeed);
 
       if (direction !== this.facingDirection) {
         this.player.setFrame(this.directionFrames[direction]);
@@ -1089,6 +1105,7 @@ export class GameScene extends Phaser.Scene {
         receptionist.setScale(5);
         receptionist.npcType = 'rina';
         this.physics.add.existing(receptionist, true);
+        this.shrinkStaticBody(receptionist, 40, 40, 20, 36);
         const receptionistCollider = this.physics.add.collider(this.player, receptionist);
         this.furnitureObjects.push(receptionist);
         this.furnitureColliders.push(receptionistCollider);
@@ -1135,11 +1152,22 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // 정적 물체(건물/NPC)의 충돌 상자를 눈에 보이는 크기보다 작게 만들어요. width/height는
+  // 실제 픽셀 크기, offsetX/offsetY는 스프라이트 좌상단 기준 상자의 시작 위치예요.
+  shrinkStaticBody(gameObject, width, height, offsetX, offsetY) {
+    if (!gameObject.body) return;
+    gameObject.body.setSize(width, height, false);
+    gameObject.body.setOffset(offsetX, offsetY);
+  }
+
   createHouse(x, y, typeKey) {
     const info = BUILDING_TYPES[typeKey];
     const house = this.add.rectangle(x, y, info.width, info.height, info.color);
     house.buildingType = typeKey;
     this.physics.add.existing(house, true);
+    // 눈에 보이는 크기는 그대로 두고 충돌 판정만 가장자리를 살짝 깎아요 (좌우 8px, 위 14px, 아래 6px).
+    // 위쪽을 더 깎은 건 지붕/윗벽 뒤로 살짝 지나갈 수 있게 해서 모서리에 덜 걸리게 하려는 거예요.
+    this.shrinkStaticBody(house, info.width - 16, info.height - 20, 8, 14);
 
     // 중세풍 디테일(지붕/문/창문/굴뚝)을 덧그려서 그냥 색 네모가 아니라 집처럼 보이게 해요.
     // 전부 물리 바디가 없는 장식용 오브젝트라 충돌 판정(위 house 사각형)에는 영향 없어요.
@@ -1193,6 +1221,8 @@ export class GameScene extends Phaser.Scene {
     npc.npcType = npcTypeKey;
 
     this.physics.add.existing(npc, true);
+    // NPC도 몸 전체(80x80)가 아니라 하체 쪽 40x40만 부딪히게 해서, 지나가다 걸리는 걸 줄였어요.
+    this.shrinkStaticBody(npc, 40, 40, 20, 36);
 
     this.tweens.add({
       targets: npc, y: y - 4,
